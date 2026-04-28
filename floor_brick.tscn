@@ -1,0 +1,20 @@
+[gd_scene format=3 uid="uid://r83grn5ubyp0"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_dfp46"]
+albedo_color = Color(0, 0.22658296, 0.24269372, 1)
+metallic = 0.35
+metallic_texture_channel = 1
+roughness = 0.4
+roughness_texture_channel = 1
+anisotropy_enabled = true
+backlight = Color(0.6789437, 0.6789437, 0.6789437, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_qqxa2"]
+material = SubResource("StandardMaterial3D_dfp46")
+size = Vector3(1, 0.15, 1)
+
+[node name="BrickAndFloor" type="Node3D" unique_id=1152108798]
+transform = Transform3D(1, 0, 0, 0, 0.05, 0, 0, 0, 1, 0, 0, 0)
+
+[node name="floor_brick_instance" type="MeshInstance3D" parent="." unique_id=938037746]
+mesh = SubResource("BoxMesh_qqxa2")
