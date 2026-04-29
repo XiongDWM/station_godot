@@ -1,10 +1,15 @@
 [gd_scene format=3 uid="uid://co8y43lk7xycy"]
 
-[ext_resource type="Script" uid="uid://cbqvpibiiit7s" path="res://main_scene.gd" id="1_x4av3"]
+[ext_resource type="Script" uid="uid://brg1d3nw4agso" path="res://_main_scene.gd" id="1_uxrcv"]
+[ext_resource type="PackedScene" uid="uid://djaj7h1xxcu1f" path="res://wall_object.tscn" id="2_rpqi1"]
 [ext_resource type="PackedScene" uid="uid://ckw6h3knil4se" path="res://odf_object.tscn" id="2_x4av3"]
+[ext_resource type="PackedScene" uid="uid://r83grn5ubyp0" path="res://floor_brick.tscn" id="4_rf2cd"]
 
 [sub_resource type="CompressedTexture2D" id="CompressedTexture2D_x4av3"]
 load_path = "res://.godot/imported/odf.png-82093f801d10a8b5380e7243d9b618b2.ctex"
+
+[sub_resource type="CompressedTexture2D" id="CompressedTexture2D_rpqi1"]
+load_path = "res://.godot/imported/icon.svg-218a8f2b3041327d8a5756f3a245f83b.ctex"
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_dfp46"]
 albedo_color = Color(0, 0.22658296, 0.24269372, 1)
@@ -64,11 +69,24 @@ albedo_color = Color(0, 0.654902, 0, 0.38431373)
 material = SubResource("StandardMaterial3D_x4av3")
 size = Vector3(1, 2, 0.5)
 
-[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("preview_cube", "grid_map", "button_cube")]
-script = ExtResource("1_x4av3")
-preview_cube = NodePath("PreviewCube")
+[sub_resource type="BoxMesh" id="BoxMesh_uxrcv"]
+material = SubResource("StandardMaterial3D_x4av3")
+size = Vector3(1, 2.5, 0.1)
+
+[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "button_cube", "button_wall", "preview_cube", "preview_wall")]
+script = ExtResource("1_uxrcv")
 grid_map = NodePath("GridMap")
 button_cube = NodePath("CanvasLayer/Panel/Button_Cube")
+button_wall = NodePath("CanvasLayer/BuildPanel/Button_wall")
+preview_cube = NodePath("PreviewCube")
+preview_wall = NodePath("PreviewWall")
+block_scene = ExtResource("2_x4av3")
+wall_scene = ExtResource("2_rpqi1")
+floor_brick = ExtResource("4_rf2cd")
+
+[node name="WallObject" parent="." unique_id=943236327 instance=ExtResource("2_rpqi1")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.016186833, 0.007905602, 0)
+visible = false
 
 [node name="HTTPRequest" type="HTTPRequest" parent="." unique_id=1203971624]
 
@@ -99,11 +117,42 @@ tooltip_text = "创建机柜"
 theme_override_constants/icon_max_width = 500
 theme_override_icons/icon = SubResource("CompressedTexture2D_x4av3")
 
+[node name="ModulePanel" type="Panel" parent="CanvasLayer" unique_id=252016293]
+offset_left = 968.0
+offset_top = 6.0
+offset_right = 1020.6946
+offset_bottom = 46.041462
+scale = Vector2(3.4538648, 3.8959618)
+
+[node name="BuildPanel" type="Panel" parent="CanvasLayer" unique_id=1381804742]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -364.0
+offset_top = -54.00006
+offset_right = -152.06348
+offset_bottom = -40.90973
+grow_horizontal = 2
+grow_vertical = 0
+scale = Vector2(3.4538648, 3.8959618)
+
+[node name="Button_wall" type="Button" parent="CanvasLayer/BuildPanel" unique_id=516869570]
+layout_mode = 0
+offset_left = 25.768234
+offset_top = 2.566776
+offset_right = 161.76823
+offset_bottom = 138.56677
+scale = Vector2(0.06182063, 0.05689597)
+tooltip_text = "墙体"
+icon = SubResource("CompressedTexture2D_rpqi1")
+
 [node name="GridMap" type="GridMap" parent="." unique_id=923857825]
 mesh_library = SubResource("MeshLibrary_rpqi1")
-cell_size = Vector3(1.035, 0.01, 1.035)
+cell_size = Vector3(1.035, 0.15, 1.035)
 data = {
-"cells": PackedInt32Array(1, 1, 0, 0, 1, 0, 2, 1, 0, 2, 2, 0, 1, 2, 0, 0, 2, 0, 0, 3, 0, 1, 3, 0, 2, 3, 0, 3, 1, 0, 3, 2, 0, 3, 3, 0, 4, 1, 0, 5, 1, 0, 6, 1, 0, 7, 1, 0, 7, 2, 0, 7, 3, 0, 7, 4, 0, 7, 5, 0, 7, 6, 0, 6, 6, 0, 5, 6, 0, 4, 6, 0, 4, 5, 0, 4, 4, 0, 4, 3, 0, 4, 2, 0, 5, 2, 0, 6, 2, 0, 5, 3, 0, 5, 4, 0, 5, 5, 0, 6, 3, 0, 6, 4, 0, 6, 5, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 1, 4, 0, 1, 5, 0, 1, 6, 0, 2, 4, 0, 2, 5, 0, 2, 6, 0, 3, 4, 0, 3, 5, 0, 3, 6, 0, 0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0, 7, 0, 0, 8, 0, 0, 8, 1, 0, 8, 2, 0, 8, 4, 0, 8, 3, 0, 8, 5, 0, 8, 6, 0, 8, 7, 0, 7, 7, 0, 6, 7, 0, 5, 7, 0, 4, 7, 0, 3, 7, 0, 2, 7, 0, 0, 7, 0, 1, 7, 0, 9, 0, 0, 9, 1, 0, 9, 2, 0, 9, 3, 0, 9, 4, 0, 9, 5, 0, 9, 6, 0, 9, 7, 0)
+"cells": PackedInt32Array(1, 1, 0, 0, 1, 0, 2, 1, 0, 2, 2, 0, 1, 2, 0, 0, 2, 0, 0, 3, 0, 1, 3, 0, 2, 3, 0, 3, 1, 0, 3, 2, 0, 3, 3, 0, 4, 1, 0, 5, 1, 0, 6, 1, 0, 7, 1, 0, 7, 2, 0, 7, 3, 0, 7, 4, 0, 7, 5, 0, 7, 6, 0, 6, 6, 0, 5, 6, 0, 4, 6, 0, 4, 5, 0, 4, 4, 0, 4, 3, 0, 4, 2, 0, 5, 2, 0, 6, 2, 0, 5, 3, 0, 5, 4, 0, 5, 5, 0, 6, 3, 0, 6, 4, 0, 6, 5, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 1, 4, 0, 1, 5, 0, 1, 6, 0, 2, 4, 0, 2, 5, 0, 2, 6, 0, 3, 4, 0, 3, 5, 0, 3, 6, 0, 0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0, 7, 0, 0, 8, 0, 0, 8, 1, 0, 8, 2, 0, 8, 4, 0, 8, 3, 0, 8, 5, 0, 8, 6, 0, 8, 7, 0, 7, 7, 0, 6, 7, 0, 5, 7, 0, 4, 7, 0, 3, 7, 0, 2, 7, 0, 0, 7, 0, 1, 7, 0, 9, 0, 0, 9, 1, 0, 9, 2, 0, 9, 3, 0, 9, 4, 0, 9, 5, 0, 9, 6, 0, 9, 7, 0, 65535, 0, 0, 65535, 1, 0, 65535, 2, 0, 65535, 3, 0, 65535, 4, 0, 65535, 5, 0, 65535, 6, 0, 65535, 7, 0, 10, 0, 0, 10, 1, 0, 10, 2, 0, 10, 3, 0, 10, 4, 0, 10, 5, 0, 10, 6, 0, 10, 7, 0)
 }
 metadata/_editor_floor_ = Vector3(0, 0, 0)
 
@@ -114,8 +163,13 @@ transform = Transform3D(0.9999035, 0.00045915015, -0.013884785, 0.0076126326, 0.
 environment = SubResource("Environment_rpqi1")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=167542007]
-transform = Transform3D(0.19017881, 0.98146564, 0.023607243, 0.5031828, -0.118093014, 0.85607314, 0.8429942, -0.15092814, -0.5163154, -7.918115, 4.4189816, -1.6790209)
+transform = Transform3D(0.18276072, 0.98146564, 0.0576524, 0.3398576, -0.118093014, 0.93303317, 0.92254835, -0.15092814, -0.35514128, 8.733883, -13.67944, -38.475677)
 
 [node name="PreviewCube" type="MeshInstance3D" parent="." unique_id=1098939959]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.6054707, 1.0457227, 2.5057166)
+visible = false
 mesh = SubResource("BoxMesh_x4av3")
+
+[node name="PreviewWall" type="MeshInstance3D" parent="." unique_id=418942334]
+visible = false
+mesh = SubResource("BoxMesh_uxrcv")
