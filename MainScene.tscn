@@ -3,7 +3,7 @@
 [ext_resource type="Script" uid="uid://brg1d3nw4agso" path="res://_main_scene.gd" id="1_uxrcv"]
 [ext_resource type="PackedScene" uid="uid://djaj7h1xxcu1f" path="res://wall_object.tscn" id="2_rpqi1"]
 [ext_resource type="PackedScene" uid="uid://ckw6h3knil4se" path="res://odf_object.tscn" id="2_x4av3"]
-[ext_resource type="PackedScene" uid="uid://r83grn5ubyp0" path="res://floor_brick.tscn" id="4_rf2cd"]
+[ext_resource type="Script" uid="uid://6a8kxyf4wr6f" path="res://camera_controll.gd" id="4_uxrcv"]
 
 [sub_resource type="CompressedTexture2D" id="CompressedTexture2D_x4av3"]
 load_path = "res://.godot/imported/odf.png-82093f801d10a8b5380e7243d9b618b2.ctex"
@@ -73,7 +73,7 @@ size = Vector3(1, 2, 0.5)
 material = SubResource("StandardMaterial3D_x4av3")
 size = Vector3(1, 2.5, 0.1)
 
-[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "button_cube", "button_wall", "preview_cube", "preview_wall")]
+[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "button_cube", "button_wall", "preview_cube", "preview_wall", "module_panel", "operation_panel", "btn_rotate", "btn_delete")]
 script = ExtResource("1_uxrcv")
 grid_map = NodePath("GridMap")
 button_cube = NodePath("CanvasLayer/Panel/Button_Cube")
@@ -82,7 +82,10 @@ preview_cube = NodePath("PreviewCube")
 preview_wall = NodePath("PreviewWall")
 block_scene = ExtResource("2_x4av3")
 wall_scene = ExtResource("2_rpqi1")
-floor_brick = ExtResource("4_rf2cd")
+module_panel = NodePath("CanvasLayer/ModulePanel")
+operation_panel = NodePath("CanvasLayer/ControllPanel")
+btn_rotate = NodePath("CanvasLayer/ControllPanel/btn_rotate")
+btn_delete = NodePath("CanvasLayer/ControllPanel/btn_delete")
 
 [node name="WallObject" parent="." unique_id=943236327 instance=ExtResource("2_rpqi1")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.016186833, 0.007905602, 0)
@@ -98,7 +101,7 @@ visible = false
 
 [node name="Panel" type="Panel" parent="CanvasLayer" unique_id=1891766489]
 offset_right = 16.21372
-offset_bottom = 40.041462
+offset_bottom = 83.419716
 scale = Vector2(3.4538648, 3.8959618)
 
 [node name="Button_Cube" type="Button" parent="CanvasLayer/Panel" unique_id=1546705011]
@@ -108,20 +111,24 @@ anchor_left = 0.5
 anchor_top = 0.034
 anchor_right = 0.5
 anchor_bottom = 0.034
-offset_left = -3.7638993
-offset_top = 4.3255043
-offset_right = 418.23608
-offset_bottom = 482.3255
+offset_left = -5.2115536
+offset_top = 5.8907146
+offset_right = 520.0397
+offset_bottom = 609.19336
 scale = Vector2(0.018190369, 0.014507048)
 tooltip_text = "创建机柜"
 theme_override_constants/icon_max_width = 500
 theme_override_icons/icon = SubResource("CompressedTexture2D_x4av3")
 
 [node name="ModulePanel" type="Panel" parent="CanvasLayer" unique_id=252016293]
-offset_left = 968.0
-offset_top = 6.0
-offset_right = 1020.6946
-offset_bottom = 46.041462
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -324.0
+offset_top = 7.000001
+offset_right = -231.72809
+offset_bottom = 123.787605
+grow_horizontal = 0
 scale = Vector2(3.4538648, 3.8959618)
 
 [node name="BuildPanel" type="Panel" parent="CanvasLayer" unique_id=1381804742]
@@ -148,6 +155,32 @@ scale = Vector2(0.06182063, 0.05689597)
 tooltip_text = "墙体"
 icon = SubResource("CompressedTexture2D_rpqi1")
 
+[node name="ControllPanel" type="Control" parent="CanvasLayer" unique_id=956763815]
+layout_mode = 3
+anchors_preset = 0
+offset_left = 131.0
+offset_top = 70.0
+offset_right = 258.0
+offset_bottom = 115.0
+
+[node name="btn_rotate" type="Button" parent="CanvasLayer/ControllPanel" unique_id=242896976]
+layout_mode = 0
+offset_left = 6.0
+offset_top = 9.0
+offset_right = 236.76013
+offset_bottom = 136.9187
+scale = Vector2(0.1950077, 0.21888901)
+text = "旋转"
+
+[node name="btn_delete" type="Button" parent="CanvasLayer/ControllPanel" unique_id=1320151889]
+layout_mode = 0
+offset_left = 78.0
+offset_top = 8.999998
+offset_right = 285.67712
+offset_bottom = 122.60742
+scale = Vector2(0.20223692, 0.23766041)
+text = "删除"
+
 [node name="GridMap" type="GridMap" parent="." unique_id=923857825]
 mesh_library = SubResource("MeshLibrary_rpqi1")
 cell_size = Vector3(1.035, 0.15, 1.035)
@@ -156,14 +189,11 @@ data = {
 }
 metadata/_editor_floor_ = Vector3(0, 0, 0)
 
-[node name="Camera3D" type="Camera3D" parent="." unique_id=1427749111]
-transform = Transform3D(0.9999035, 0.00045915015, -0.013884785, 0.0076126326, 0.8179306, 0.5752666, 0.011620924, -0.57531667, 0.8178482, 4.518807, 8.3402815, 12.044425)
-
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1425135014]
 environment = SubResource("Environment_rpqi1")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=167542007]
-transform = Transform3D(0.18276072, 0.98146564, 0.0576524, 0.3398576, -0.118093014, 0.93303317, 0.92254835, -0.15092814, -0.35514128, 8.733883, -13.67944, -38.475677)
+transform = Transform3D(0.18276072, 0.98146564, 0.0576524, 0.3398576, -0.118093014, 0.93303317, 0.92254835, -0.15092814, -0.35514128, 8.694768, -14.312469, -38.234726)
 
 [node name="PreviewCube" type="MeshInstance3D" parent="." unique_id=1098939959]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.6054707, 1.0457227, 2.5057166)
@@ -173,3 +203,10 @@ mesh = SubResource("BoxMesh_x4av3")
 [node name="PreviewWall" type="MeshInstance3D" parent="." unique_id=418942334]
 visible = false
 mesh = SubResource("BoxMesh_uxrcv")
+
+[node name="CameraPivot" type="Node3D" parent="." unique_id=1647404355]
+transform = Transform3D(1, 0, 0, 0, 0.76604426, 0.6427874, 0, -0.6427874, 0.76604426, 4.0951633, 12.614072, 11.696836)
+script = ExtResource("4_uxrcv")
+
+[node name="Camera3D" type="Camera3D" parent="CameraPivot" unique_id=1427749111]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1.0000001, 0, 0, 0)
