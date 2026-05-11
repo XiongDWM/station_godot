@@ -20,10 +20,14 @@ var current_building = {
 	"is_active": false
 }
 var layout_data_array=[]
+var current_station_id: int = -1
 # 当前右键选中的物体
 var selected_object: Node3D = null
 # 左键选中的物体 (用于 module_panel)
 var selected_module_object: Node3D = null
+
+func _get_app_state() -> Node:
+	return get_node_or_null("/root/AppState")
 
 func _ready():
 	if preview_cube: preview_cube.visible = false
@@ -38,6 +42,22 @@ func _ready():
 	if btn_rotate: btn_rotate.pressed.connect(_on_rotate_selected_object)
 	if btn_delete: btn_delete.pressed.connect(_on_delete_selected_object)
 	if btn_save: btn_save.pressed.connect(save_layoutdata)
+
+	# 从全局状态恢复 station_id
+	var app_state = _get_app_state()
+	if app_state and app_state.has_method("get_station_id"):
+		current_station_id = app_state.get_station_id()
+
+	# 连接 API 管理器信号
+	if http_request:
+		if http_request.has_signal("station_id_changed") and not http_request.station_id_changed.is_connected(_on_station_id_changed):
+			http_request.station_id_changed.connect(_on_station_id_changed)
+		if http_request.has_signal("data_received") and not http_request.data_received.is_connected(_on_layout_data_received):
+			http_request.data_received.connect(_on_layout_data_received)
+		if http_request.has_signal("save_completed") and not http_request.save_completed.is_connected(_on_layout_saved):
+			http_request.save_completed.connect(_on_layout_saved)
+		if http_request.has_signal("request_failed") and not http_request.request_failed.is_connected(_on_api_request_failed):
+			http_request.request_failed.connect(_on_api_request_failed)
 
 func _on_building_mode_selected(scene: PackedScene, preview: MeshInstance3D):
 	if current_building["scene"] == scene and current_building["is_active"]:
@@ -66,7 +86,7 @@ func _process(delta):
 	if current_building["is_active"] and current_building["preview"]:
 		handle_preview_logic(delta)
 
-func handle_preview_logic(delta):
+func handle_preview_logic(_delta):
 	if not grid_map: return
 	var camera = $CameraPivot/Camera3D
 	if not camera: return
@@ -143,11 +163,9 @@ func place_current_building():
 	new_building.global_transform = preview_node.global_transform
 	print("放置了: ", scene_to_spawn.resource_path)
 
-# ------------------- 核心修改区域 -------------------
-
 func _input(event):
-	# 如果按下了 Alt 键，直接跳过所有点击逻辑（把操作权完全交给摄像机脚本）
-	if Input.is_key_pressed(KEY_ALT):
+	# 如果按下了 ctrl 键，直接跳过所有点击逻辑（把操作权完全交给摄像机脚本）
+	if Input.is_key_pressed(KEY_CTRL):
 		return
 
 	if event is InputEventMouseButton and event.pressed:
@@ -217,6 +235,9 @@ func handle_right_click_operation():
 
 	if result:
 		var collider = result.collider
+		# 如果点到的是 grid_map（地板），则不弹出 operation_panel
+		if collider == grid_map:
+			return
 		selected_object = collider
 		show_operation_panel(collider)
 
@@ -272,7 +293,74 @@ func save_layoutdata():
 	
 	var json_string = JSON.stringify(layout_data_array, "  ") # "  " 是为了格式化缩进，方便调试
 	print("布局数据:\n", json_string)
+	var app_state = _get_app_state()
+	if app_state and app_state.has_method("get_station_id"):
+		current_station_id = app_state.get_station_id()
+	if http_request and http_request.has_method("save_layout_data"):
+		http_request.save_layout_data(json_string, current_station_id)
 	return json_string
+
+func set_station_id(station_id: int) -> void:
+	current_station_id = station_id
+	var app_state = _get_app_state()
+	if app_state and app_state.has_method("set_station_id"):
+		app_state.set_station_id(station_id)
+
+func get_station_id() -> int:
+	var app_state = _get_app_state()
+	if app_state and app_state.has_method("get_station_id"):
+		return app_state.get_station_id()
+	return current_station_id
+
+func _on_station_id_changed(station_id: int) -> void:
+	current_station_id = station_id
+	var app_state = _get_app_state()
+	if app_state and app_state.has_method("set_station_id"):
+		app_state.set_station_id(station_id)
+	print("当前 station_id:", current_station_id)
+
+func _on_layout_data_received(data) -> void:
+	# 兼容字符串布局与已解析结构
+	if typeof(data) == TYPE_STRING:
+		load_layoutdata(data)
+		return
+
+	if typeof(data) == TYPE_DICTIONARY and data.has("layout"):
+		load_layoutdata(str(data["layout"]))
+		return
+
+	if typeof(data) == TYPE_ARRAY:
+		_rebuild_layout_from_items(data)
+
+func _on_layout_saved(data) -> void:
+	print("保存成功:", data)
+
+func _on_api_request_failed(message: String, response_code: int) -> void:
+	push_error("API 请求失败: %s (%d)" % [message, response_code])
+
+func _rebuild_layout_from_items(data: Array) -> void:
+	for child in get_children():
+		if child is MeshInstance3D and not child.is_in_group("preview"):
+			child.queue_free()
+
+	for item in data:
+		var path = item["scene_path"]
+		if ResourceLoader.exists(path):
+			var scene = load(path) as PackedScene
+			if scene:
+				var new_instance = scene.instantiate()
+				add_child(new_instance)
+
+				var b = item["basis"]
+				var basis = Basis(
+					Vector3(b["x"]["x"], b["x"]["y"], b["x"]["z"]),
+					Vector3(b["y"]["x"], b["y"]["y"], b["y"]["z"]),
+					Vector3(b["z"]["x"], b["z"]["y"], b["z"]["z"])
+				)
+
+				var p = item["position"]
+				var pos = Vector3(p["x"], p["y"], p["z"])
+				new_instance.transform = Transform3D(basis, pos)
 
 # 这是一个辅助函数，演示如何从 JSON 字符串恢复数据
 # 实际使用时，你是从服务器获取这个字符串，然后调用这个函数
