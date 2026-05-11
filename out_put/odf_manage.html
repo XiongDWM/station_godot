@@ -90,7 +90,8 @@ body {
 	z-index: 1;
 }
 		</style>
-		
+		<link rel="manifest" href="odf_manage.manifest.json">
+
 	</head>
 	<body>
 		<canvas id="canvas">
@@ -106,10 +107,18 @@ body {
 			<progress id="status-progress"></progress>
 			<div id="status-notice"></div>
 		</div>
-
+		<script type="text/javascript">
+			window.addEventListener('godot-load-room', function(e) {
+				var stationId = e.detail.id;
+				console.log("点击station:", stationId);
+				if (typeof godotInstance !== 'undefined') {
+					godotInstance.ccall('on_room_id_received', null, ['string'], [roomId]);
+				}
+			});
+		</script>
 		<script src="odf_manage.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"odf_manage","experimentalVK":false,"fileSizes":{"odf_manage.pck":115852,"odf_manage.wasm":1601076},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"odf_manage","experimentalVK":false,"fileSizes":{"odf_manage.pck":110208,"odf_manage.wasm":1601076},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"odf_manage.service.worker.js"};
 const GODOT_THREADS_ENABLED = true;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -209,6 +218,17 @@ const engine = new Engine(GODOT_CONFIG);
 			},
 		}).then(() => {
 			setStatusMode('hidden');
+			const instance = engine.instance || engine;
+			window.addEventListener('godot-load-room', function(e) {
+			const stationId = e.detail.id;
+			console.log("点击station:", stationId);
+
+			if (typeof instance !== 'undefined') {
+				instance.ccall('on_room_id_received', null, ['int'], [stationId]);
+			} else {
+				console.warn("Godot 实例未准备好");
+			}
+    });
 		}, displayFailureNotice);
 	}
 }());

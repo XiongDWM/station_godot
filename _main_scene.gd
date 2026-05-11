@@ -1,8 +1,8 @@
 extends Node3D
 
 @export var grid_map: GridMap
-@export var button_cube: Button
-@export var button_wall: Button
+@export var btn_cube: Button
+@export var btn_wall: Button
 @export var preview_cube: MeshInstance3D
 @export var preview_wall: MeshInstance3D
 @export var block_scene: PackedScene
@@ -11,13 +11,15 @@ extends Node3D
 @export var operation_panel: Control 
 @export var btn_rotate: Button
 @export var btn_delete: Button
+@export var btn_save:Button
+@export var http_request:HTTPRequest
 
 var current_building = {
 	"scene": null,
 	"preview": null,
 	"is_active": false
 }
-
+var layout_data_array=[]
 # 当前右键选中的物体
 var selected_object: Node3D = null
 # 左键选中的物体 (用于 module_panel)
@@ -29,12 +31,13 @@ func _ready():
 	if operation_panel: operation_panel.visible = false 
 	if module_panel: module_panel.visible = false
 	
-	if button_cube: button_cube.pressed.connect(_on_building_mode_selected.bind(block_scene, preview_cube))
-	if button_wall: button_wall.pressed.connect(_on_building_mode_selected.bind(wall_scene, preview_wall))
+	if btn_cube: btn_cube.pressed.connect(_on_building_mode_selected.bind(block_scene, preview_cube))
+	if btn_wall: btn_wall.pressed.connect(_on_building_mode_selected.bind(wall_scene, preview_wall))
 	
 	# 连接面板按钮的信号
 	if btn_rotate: btn_rotate.pressed.connect(_on_rotate_selected_object)
 	if btn_delete: btn_delete.pressed.connect(_on_delete_selected_object)
+	if btn_save: btn_save.pressed.connect(save_layoutdata)
 
 func _on_building_mode_selected(scene: PackedScene, preview: MeshInstance3D):
 	if current_building["scene"] == scene and current_building["is_active"]:
@@ -239,3 +242,74 @@ func _on_delete_selected_object():
 		selected_object.queue_free()
 		operation_panel.visible = false
 		selected_object = null
+		
+func save_layoutdata():
+	layout_data_array.clear()
+	
+	for child in get_children():
+		# 筛选条件：必须是 MeshInstance3D，且不是预览块，且不在 "preview" 组里
+		if child is MeshInstance3D and not child.is_in_group("preview"):
+			
+			# 获取该物体的全局变换信息 (包含位置、旋转、缩放)
+			var global_xform = child.global_transform
+			
+			var item_info = {
+				"scene_path": child.scene_file_path, # 记录场景路径，用于重新实例化
+				# 记录位置
+				"position": {
+					"x": global_xform.origin.x,
+					"y": global_xform.origin.y,
+					"z": global_xform.origin.z
+				},
+				# 记录旋转和缩放 (Basis 矩阵)
+				"basis": {
+					"x": {"x": global_xform.basis.x.x, "y": global_xform.basis.x.y, "z": global_xform.basis.x.z},
+					"y": {"x": global_xform.basis.y.x, "y": global_xform.basis.y.y, "z": global_xform.basis.y.z},
+					"z": {"x": global_xform.basis.z.x, "y": global_xform.basis.z.y, "z": global_xform.basis.z.z}
+				}
+			}
+			layout_data_array.append(item_info)
+	
+	var json_string = JSON.stringify(layout_data_array, "  ") # "  " 是为了格式化缩进，方便调试
+	print("布局数据:\n", json_string)
+	return json_string
+
+# 这是一个辅助函数，演示如何从 JSON 字符串恢复数据
+# 实际使用时，你是从服务器获取这个字符串，然后调用这个函数
+func load_layoutdata(json_string: String):
+	var json = JSON.new()
+	var parse_result = json.parse(json_string)
+	
+	if parse_result != OK:
+		push_error("JSON 解析失败")
+		return
+		
+	var data = json.data # 这就是 layout_data_array
+	
+	for child in get_children():
+		if child is MeshInstance3D and not child.is_in_group("preview"):
+			child.queue_free()
+	
+	# 3. 重建物体
+	for item in data:
+		var path = item["scene_path"]
+		if ResourceLoader.exists(path):
+			var scene = load(path) as PackedScene
+			if scene:
+				var new_instance = scene.instantiate()
+				add_child(new_instance)
+				
+				# 重建 Transform3D
+				# 先还原 Basis (旋转+缩放)
+				var b = item["basis"]
+				var basis = Basis(
+					Vector3(b["x"]["x"], b["x"]["y"], b["x"]["z"]),
+					Vector3(b["y"]["x"], b["y"]["y"], b["y"]["z"]),
+					Vector3(b["z"]["x"], b["z"]["y"], b["z"]["z"])
+				)
+				# 再还原位置
+				var p = item["position"]
+				var pos = Vector3(p["x"], p["y"], p["z"])
+				
+				# 应用变换
+				new_instance.transform = Transform3D(basis, pos)
