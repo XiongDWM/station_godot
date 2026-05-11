@@ -352,7 +352,7 @@ func _rebuild_layout_from_items(data: Array) -> void:
 				add_child(new_instance)
 
 				var b = item["basis"]
-				var basis = Basis(
+				var basis_matirix = Basis(
 					Vector3(b["x"]["x"], b["x"]["y"], b["x"]["z"]),
 					Vector3(b["y"]["x"], b["y"]["y"], b["y"]["z"]),
 					Vector3(b["z"]["x"], b["z"]["y"], b["z"]["z"])
@@ -360,7 +360,7 @@ func _rebuild_layout_from_items(data: Array) -> void:
 
 				var p = item["position"]
 				var pos = Vector3(p["x"], p["y"], p["z"])
-				new_instance.transform = Transform3D(basis, pos)
+				new_instance.transform = Transform3D(basis_matirix, pos)
 
 # 这是一个辅助函数，演示如何从 JSON 字符串恢复数据
 # 实际使用时，你是从服务器获取这个字符串，然后调用这个函数
@@ -390,7 +390,7 @@ func load_layoutdata(json_string: String):
 				# 重建 Transform3D
 				# 先还原 Basis (旋转+缩放)
 				var b = item["basis"]
-				var basis = Basis(
+				var basis_matirix = Basis(
 					Vector3(b["x"]["x"], b["x"]["y"], b["x"]["z"]),
 					Vector3(b["y"]["x"], b["y"]["y"], b["y"]["z"]),
 					Vector3(b["z"]["x"], b["z"]["y"], b["z"]["z"])
@@ -400,4 +400,4 @@ func load_layoutdata(json_string: String):
 				var pos = Vector3(p["x"], p["y"], p["z"])
 				
 				# 应用变换
-				new_instance.transform = Transform3D(basis, pos)
+				new_instance.transform = Transform3D(basis_matirix, pos)
