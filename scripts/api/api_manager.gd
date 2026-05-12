@@ -11,18 +11,42 @@ var _pending_action: String = ""
 func _get_app_state() -> Node:
 	return get_node_or_null("/root/AppState")
 
-func fetch_room_layout(room_id: int) -> void:
+func bootstrap_layout(refresh_from_server: bool = true) -> bool:
+	var app_state = _get_app_state()
+	if app_state and app_state.has_method("refresh_station_id_from_web_storage"):
+		app_state.refresh_station_id_from_web_storage()
+
+	var station_id := current_station_id
+	if app_state and app_state.has_method("get_station_id"):
+		station_id = app_state.get_station_id()
+
+	if station_id <= 0:
+		return false
+
+	fetch_room_layout(station_id, refresh_from_server)
+	return true
+
+func fetch_room_layout(room_id: int, refresh_from_server: bool = false) -> void:
 	var endpoint := "%s/findById" % [base_url]
 	var headers := ["Content-Type: application/json"]
 	var payload := {"id": room_id}
 	var json_body := JSON.stringify(payload)
-	print("正在请求:", endpoint, " body:", json_body)
 	current_station_id = room_id
-	_pending_action = "fetch"
 	var app_state = _get_app_state()
 	if app_state and app_state.has_method("set_station_id"):
 		app_state.set_station_id(room_id)
 	emit_signal("station_id_changed", room_id)
+
+	if app_state and app_state.has_method("get_layout_data"):
+		var cached_layout = app_state.get_layout_data(room_id)
+		if cached_layout != "":
+			print("命中布局缓存，station_id:", room_id)
+			emit_signal("data_received", cached_layout)
+			if not refresh_from_server:
+				return
+
+	print("正在请求:", endpoint, " body:", json_body)
+	_pending_action = "fetch"
 	request(endpoint, headers, HTTPClient.METHOD_POST, json_body)
 
 func _on_request_completed(result, response_code, _headers, body):
@@ -32,22 +56,25 @@ func _on_request_completed(result, response_code, _headers, body):
 		emit_signal("request_failed", err_msg, response_code)
 		return
 
-	# 解析 JSON
 	var json := JSON.new()
 	var err = json.parse(body.get_string_from_utf8())
 	if err != OK:
 		push_error("JSON解析失败")
 		emit_signal("request_failed", "JSON解析失败", response_code)
 		return
-	
-	# 根据当前请求类型发出不同信号
+
 	var parsed = json.data
 	if _pending_action == "save":
 		emit_signal("save_completed", parsed)
 	else:
+		var app_state = _get_app_state()
 		if typeof(parsed) == TYPE_DICTIONARY and parsed.has("data"):
+			if app_state and app_state.has_method("set_layout_data") and parsed["data"] is String:
+				app_state.set_layout_data(current_station_id, parsed["data"])
 			emit_signal("data_received", parsed["data"])
 		else:
+			if app_state and app_state.has_method("set_layout_data") and parsed is String:
+				app_state.set_layout_data(current_station_id, parsed)
 			emit_signal("data_received", parsed)
 	_pending_action = ""
 

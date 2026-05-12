@@ -173,11 +173,23 @@ const GODOT_ROOM_ID_KEY = 'godot_selected_room_id';
 		return localStorage.getItem(GODOT_ROOM_ID_KEY);
 	}
 
+	function getRoomIdFromQuery() {
+		const queryId = new URLSearchParams(window.location.search).get('id');
+		if (queryId) {
+			return queryId;
+		}
+		return null;
+	}
+
 	function sendRoomIdToGodot(id) {
-		if (!godotInstance || id === null || id === undefined || id === '') {
+		if (id === null || id === undefined || id === '') {
 			return false;
 		}
-		godotInstance.ccall('on_room_id_received', null, ['string'], [String(id)]);
+		saveRoomId(id);
+		if (!godotInstance) {
+			return false;
+		}
+		console.log('Godot 已启动，station id 已写入 localStorage，等待godot应用侧读取:', id);
 		return true;
 	}
 
@@ -206,6 +218,12 @@ const GODOT_ROOM_ID_KEY = 'godot_selected_room_id';
 			handleRoomEvent(data.detail || { id: data.id, stationId: data.stationId });
 		}
 	});
+
+	const queryRoomId = getRoomIdFromQuery();
+	if (queryRoomId) {
+		console.log('从 iframe URL 读取 station id:', queryRoomId);
+		saveRoomId(queryRoomId);
+	}
 
 	const missing = Engine.getMissingFeatures({
 		threads: GODOT_THREADS_ENABLED,
@@ -257,10 +275,13 @@ const GODOT_ROOM_ID_KEY = 'godot_selected_room_id';
 		}).then(() => {
 			setStatusMode('hidden');
 			godotInstance = engine.instance || engine;
-			const savedRoomId = getSavedRoomId();
+			if (window.parent && window.parent !== window) {
+				window.parent.postMessage({ type: 'godot-ready' }, window.location.origin);
+			}
+			const savedRoomId = getSavedRoomId() || getRoomIdFromQuery();
 			if (savedRoomId) {
+				console.log('Godot 启动后补发 station id:', savedRoomId);
 				sendRoomIdToGodot(savedRoomId);
-				console.log(savedRoomId)
 			}
 		}, displayFailureNotice);
 	}

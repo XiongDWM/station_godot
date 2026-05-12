@@ -110,16 +110,14 @@ body {
 
 		<script src="odf_manage.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"odf_manage","experimentalVK":false,"fileSizes":{"odf_manage.pck":119964,"odf_manage.wasm":1601076},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"odf_manage.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"odf_manage","experimentalVK":false,"fileSizes":{"odf_manage.pck":130168,"odf_manage.wasm":1601076},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"odf_manage.service.worker.js"};
 const GODOT_THREADS_ENABLED = true;
 const engine = new Engine(GODOT_CONFIG);
-const GODOT_ROOM_ID_KEY = 'godot_selected_room_id';
 
 (function () {
 	const statusOverlay = document.getElementById('status');
 	const statusProgress = document.getElementById('status-progress');
 	const statusNotice = document.getElementById('status-notice');
-	let godotInstance = null;
 
 	let initializing = true;
 	let statusMode = '';
@@ -162,50 +160,6 @@ const GODOT_ROOM_ID_KEY = 'godot_selected_room_id';
 		setStatusMode('notice');
 		initializing = false;
 	}
-	function saveRoomId(id) {
-		if (id === null || id === undefined || id === '') {
-			return;
-		}
-		localStorage.setItem(GODOT_ROOM_ID_KEY, String(id));
-	}
-
-	function getSavedRoomId() {
-		return localStorage.getItem(GODOT_ROOM_ID_KEY);
-	}
-
-	function sendRoomIdToGodot(id) {
-		if (!godotInstance || id === null || id === undefined || id === '') {
-			return false;
-		}
-		godotInstance.ccall('on_room_id_received', null, ['string'], [String(id)]);
-		return true;
-	}
-
-	function handleRoomEvent(detail) {
-		if (!detail) {
-			return;
-		}
-		const roomId = detail.id ?? detail.stationId;
-		saveRoomId(roomId);
-		if (!sendRoomIdToGodot(roomId)) {
-			console.log('Godot 尚未启动，已暂存 room id:', roomId);
-		}
-	}
-
-	window.addEventListener('godot-load-room', function (e) {
-		handleRoomEvent(e.detail);
-	});
-
-	window.addEventListener('message', function (e) {
-		var data = e.data;
-		if (!data) {
-			return;
-		}
-
-		if (data.type === 'godot-load-room') {
-			handleRoomEvent(data.detail || { id: data.id, stationId: data.stationId });
-		}
-	});
 
 	const missing = Engine.getMissingFeatures({
 		threads: GODOT_THREADS_ENABLED,
@@ -256,12 +210,6 @@ const GODOT_ROOM_ID_KEY = 'godot_selected_room_id';
 			},
 		}).then(() => {
 			setStatusMode('hidden');
-			godotInstance = engine.instance || engine;
-			const savedRoomId = getSavedRoomId();
-			if (savedRoomId) {
-				sendRoomIdToGodot(savedRoomId);
-				console.log(savedRoomId)
-			}
 		}, displayFailureNotice);
 	}
 }());
