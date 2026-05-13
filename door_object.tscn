@@ -1,0 +1,34 @@
+[gd_scene format=3 uid="uid://bmjt0aslvismt"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1v8lc"]
+albedo_color = Color(0.5104071, 0.21324033, 0.006449617, 1)
+metallic = 0.79
+
+[sub_resource type="BoxMesh" id="BoxMesh_qrvnv"]
+material = SubResource("StandardMaterial3D_1v8lc")
+size = Vector3(1, 2.5, 0.1)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_naxlh"]
+size = Vector3(1, 2.5, 1)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_qrvnv"]
+albedo_color = Color(0.7529412, 0.7529412, 0.7529412, 1)
+roughness = 0.27
+roughness_texture_channel = 4
+
+[sub_resource type="SphereMesh" id="SphereMesh_mulo3"]
+material = SubResource("StandardMaterial3D_qrvnv")
+radius = 0.05
+height = 0.2
+
+[node name="DoorObject" type="StaticBody3D" unique_id=887999685]
+
+[node name="door" type="MeshInstance3D" parent="." unique_id=1218602848]
+mesh = SubResource("BoxMesh_qrvnv")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=367021878]
+shape = SubResource("BoxShape3D_naxlh")
+
+[node name="handler" type="MeshInstance3D" parent="." unique_id=1448866517]
+transform = Transform3D(1, 0, 0, 0, 0.042573173, -0.99909335, 0, 0.99909335, 0.042573173, 0.42538872, 0.13741761, 0.004305348)
+mesh = SubResource("SphereMesh_mulo3")

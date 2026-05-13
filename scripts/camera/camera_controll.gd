@@ -33,7 +33,7 @@ func _input(event):
 			new_distance = min(new_distance, current_max_distance)
 			_update_camera_distance(new_distance)
 
-	var is_mod_pressed = Input.is_key_pressed(KEY_ALT) or Input.is_key_pressed(KEY_META)
+	var is_mod_pressed = Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_META)
 
 	if event is InputEventMouseMotion:
 		if event.button_mask & MOUSE_BUTTON_MASK_RIGHT and is_mod_pressed:

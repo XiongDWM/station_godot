@@ -18,6 +18,9 @@ const SelectionControllerScript = preload("res://scripts/controllers/selection_c
 @export var btn_delete: Button
 @export var btn_save:Button
 @export var http_request:HTTPRequest
+@export var btn_door: Button
+@export var door_scene: PackedScene
+@export var floor_brick_scene: PackedScene
 
 var building_controller := BuildingControllerScript.new()
 var layout_serializer := LayoutSerializerScript.new()
@@ -27,7 +30,7 @@ var selection_controller := SelectionControllerScript.new()
 func _ready():
 	# print("[MainScene._ready] btn_cube=", btn_cube, ", btn_wall=", btn_wall, ", preview_cube=", preview_cube, ", preview_wall=", preview_wall, ", block_scene=", block_scene, ", wall_scene=", wall_scene)
 	building_controller.initialize(preview_cube, preview_wall)
-	building_controller.bind_buttons(btn_cube, btn_wall, block_scene, wall_scene, preview_cube, preview_wall, self, &"_on_building_mode_selected")
+	building_controller.bind_buttons(btn_cube, btn_wall, btn_door, block_scene, wall_scene, door_scene, preview_cube, preview_wall, self, &"_on_building_mode_selected")
 	selection_controller.initialize(operation_panel, module_panel)
 	selection_controller.bind_buttons(btn_rotate, btn_delete, self, &"_on_rotate_selected_object", &"_on_delete_selected_object")
 	layout_flow_controller.setup(self, http_request, layout_serializer)

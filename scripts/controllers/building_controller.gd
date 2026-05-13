@@ -14,11 +14,14 @@ func initialize(preview_cube: MeshInstance3D, preview_wall: MeshInstance3D) -> v
 	if preview_wall:
 		preview_wall.visible = false
 
-func bind_buttons(btn_cube: Button, btn_wall: Button, block_scene: PackedScene, wall_scene: PackedScene, preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, target: Object, method: StringName) -> void:
+
+func bind_buttons(btn_cube: Button, btn_wall: Button, btn_door: Button, block_scene: PackedScene, wall_scene: PackedScene, door_scene: PackedScene, preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, target: Object, method: StringName) -> void:
 	if btn_cube:
 		btn_cube.pressed.connect(Callable(target, method).bind(block_scene, preview_cube))
 	if btn_wall:
 		btn_wall.pressed.connect(Callable(target, method).bind(wall_scene, preview_wall))
+	if btn_door:
+		btn_door.pressed.connect(Callable(target, method).bind(door_scene, preview_wall))
 
 func set_building_mode(scene: PackedScene, preview: MeshInstance3D, operation_panel: Control, module_panel: Control) -> void:
 	if current_building["scene"] == scene and current_building["is_active"]:

@@ -5,6 +5,7 @@ signal data_received(data)
 signal save_completed(data)
 signal request_failed(message, response_code)
 var base_url :="https://192.168.0.252/api/stationLayout"
+const TEST_STATION_ID := 2381
 var current_station_id: int = -1
 var _pending_action: String = ""
 
@@ -21,7 +22,9 @@ func bootstrap_layout(refresh_from_server: bool = true) -> bool:
 		station_id = app_state.get_station_id()
 
 	if station_id <= 0:
-		return false
+		station_id = TEST_STATION_ID
+		if app_state and app_state.has_method("set_station_id"):
+			app_state.set_station_id(station_id)
 
 	fetch_room_layout(station_id, refresh_from_server)
 	return true
@@ -64,18 +67,19 @@ func _on_request_completed(result, response_code, _headers, body):
 		return
 
 	var parsed = json.data
+	print("后端返回对象:\n", JSON.stringify(parsed, "  "))
 	if _pending_action == "save":
 		emit_signal("save_completed", parsed)
 	else:
 		var app_state = _get_app_state()
-		if typeof(parsed) == TYPE_DICTIONARY and parsed.has("data"):
-			if app_state and app_state.has_method("set_layout_data") and parsed["data"] is String:
-				app_state.set_layout_data(current_station_id, parsed["data"])
-			emit_signal("data_received", parsed["data"])
+		var layout_json := _extract_layout_json(parsed)
+		print("提取到的 layout 字符串:\n", layout_json)
+		if _has_valid_layout_payload(layout_json):
+			if app_state and app_state.has_method("set_layout_data"):
+				app_state.set_layout_data(current_station_id, layout_json)
+			emit_signal("data_received", layout_json)
 		else:
-			if app_state and app_state.has_method("set_layout_data") and parsed is String:
-				app_state.set_layout_data(current_station_id, parsed)
-			emit_signal("data_received", parsed)
+			print("机房", current_station_id, "暂无可加载布局")
 	_pending_action = ""
 
 func save_layout_data(layout_data_string: String, station: int) -> void:
@@ -103,3 +107,32 @@ func save_layout_data(layout_data_string: String, station: int) -> void:
 
 func get_current_station_id() -> int:
 	return current_station_id
+
+func _has_valid_layout_payload(data) -> bool:
+	match typeof(data):
+		TYPE_STRING:
+			return str(data).strip_edges() != ""
+		TYPE_ARRAY:
+			return (data as Array).size() > 0
+		_:
+			return false
+
+func _extract_layout_json(payload) -> String:
+	return _find_layout_value(payload)
+
+func _find_layout_value(value) -> String:
+	match typeof(value):
+		TYPE_DICTIONARY:
+			var dict_value := value as Dictionary
+			if dict_value.has("layout"):
+				return str(dict_value["layout"]).strip_edges()
+			for nested_value in dict_value.values():
+				var nested_layout := _find_layout_value(nested_value)
+				if nested_layout != "":
+					return nested_layout
+		TYPE_ARRAY:
+			for nested_value in value:
+				var nested_layout := _find_layout_value(nested_value)
+				if nested_layout != "":
+					return nested_layout
+	return ""

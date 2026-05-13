@@ -4,10 +4,10 @@ class_name LayoutFlowController
 
 var root: Node3D = null
 var http_request: HTTPRequest = null
-var layout_serializer: LayoutSerializer = null
+var layout_serializer = null
 var current_station_id: int = -1
 
-func setup(target_root: Node3D, request_node: HTTPRequest, serializer: LayoutSerializer) -> void:
+func setup(target_root: Node3D, request_node: HTTPRequest, serializer) -> void:
 	root = target_root
 	http_request = request_node
 	layout_serializer = serializer
@@ -66,20 +66,24 @@ func _on_station_id_changed(station_id: int) -> void:
 	_try_load_cached_layout()
 
 func _on_layout_data_received(data) -> void:
-	if typeof(data) == TYPE_STRING:
-		_cache_layout_data(data)
-		load_layoutdata(data)
+	if not layout_serializer or not root:
 		return
-
-	if typeof(data) == TYPE_DICTIONARY and data.has("layout"):
-		var layout_string = str(data["layout"])
-		_cache_layout_data(layout_string)
-		load_layoutdata(layout_string)
+	var layout_json := str(data).strip_edges()
+	if not _has_valid_layout_data(layout_json):
+		push_warning("收到的 layout 为空，跳过加载")
 		return
-
-	if typeof(data) == TYPE_ARRAY:
-		_cache_layout_data(JSON.stringify(data, "  "))
-		layout_serializer.deserialize_items_to_scene(data, root)
+	if not layout_serializer.has_method("validate_layout_json"):
+		push_warning("layout_serializer 缺少 validate_layout_json，跳过校验")
+		print("待加载的 layout 原文:\n", layout_json)
+		return
+	var validation_result = layout_serializer.call("validate_layout_json", layout_json)
+	if not validation_result.get("ok", false):
+		push_warning("layout 校验失败: %s" % validation_result.get("message", "未知错误"))
+		print("待加载的 layout 原文:\n", layout_json)
+		return
+	print("layout 校验通过，数量:", validation_result.get("count", 0))
+	_cache_layout_data(layout_json)
+	load_layoutdata(layout_json)
 
 func _on_layout_saved(data) -> void:
 	print("保存成功:", data)
@@ -100,9 +104,18 @@ func _try_load_cached_layout() -> void:
 		return
 	if app_state and app_state.has_method("get_layout_data"):
 		var cached_layout = app_state.get_layout_data(current_station_id)
-		if cached_layout != "":
+		if _has_valid_layout_data(cached_layout):
 			load_layoutdata(cached_layout)
 
 func load_layoutdata(json_string: String) -> void:
-	if layout_serializer and root:
+	if layout_serializer and root and _has_valid_layout_data(json_string):
 		layout_serializer.deserialize_json_to_scene(json_string, root)
+
+func _has_valid_layout_data(data) -> bool:
+	match typeof(data):
+		TYPE_STRING:
+			return str(data).strip_edges() != ""
+		TYPE_ARRAY:
+			return (data as Array).size() > 0
+		_:
+			return false
