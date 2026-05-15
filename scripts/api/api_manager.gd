@@ -9,6 +9,10 @@ const TEST_STATION_ID := 2381
 var current_station_id: int = -1
 var _pending_action: String = ""
 
+func _ready() -> void:
+	if not request_completed.is_connected(_on_request_completed):
+		request_completed.connect(_on_request_completed)
+
 func _get_app_state() -> Node:
 	return get_node_or_null("/root/AppState")
 
@@ -22,7 +26,7 @@ func bootstrap_layout(refresh_from_server: bool = true) -> bool:
 		station_id = app_state.get_station_id()
 
 	if station_id <= 0:
-		station_id = TEST_STATION_ID
+		station_id = TEST_STATION_ID  # 之后改回来
 		if app_state and app_state.has_method("set_station_id"):
 			app_state.set_station_id(station_id)
 
@@ -53,6 +57,7 @@ func fetch_room_layout(room_id: int, refresh_from_server: bool = false) -> void:
 	request(endpoint, headers, HTTPClient.METHOD_POST, json_body)
 
 func _on_request_completed(result, response_code, _headers, body):
+	print("HTTP 请求完成，结果:", result, " 响应码:", response_code)
 	if result != RESULT_SUCCESS or response_code != 200:
 		var err_msg := "请求失败: %d" % response_code
 		push_error(err_msg)
@@ -61,6 +66,7 @@ func _on_request_completed(result, response_code, _headers, body):
 
 	var json := JSON.new()
 	var err = json.parse(body.get_string_from_utf8())
+	print("HTTP 响应 JSON 解析结果:", err)
 	if err != OK:
 		push_error("JSON解析失败")
 		emit_signal("request_failed", "JSON解析失败", response_code)
