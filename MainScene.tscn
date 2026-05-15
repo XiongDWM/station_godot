@@ -77,7 +77,7 @@ size = Vector3(1, 2, 0.5)
 material = SubResource("StandardMaterial3D_x4av3")
 size = Vector3(1, 2.5, 0.1)
 
-[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "btn_cube", "btn_wall", "preview_cube", "preview_wall", "module_panel", "operation_panel", "btn_rotate", "btn_delete", "btn_save", "http_request", "btn_door")]
+[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "btn_cube", "btn_wall", "preview_cube", "preview_wall", "module_panel", "operation_panel", "btn_rotate", "btn_delete", "btn_save", "http_request", "btn_door", "btn_floor")]
 script = ExtResource("1_rf2cd")
 grid_map = NodePath("GridMap")
 btn_cube = NodePath("CanvasLayer/Panel/btn_cube")
@@ -93,6 +93,7 @@ btn_delete = NodePath("CanvasLayer/ControllPanel/btn_delete")
 btn_save = NodePath("CanvasLayer/Panel/btn_save")
 http_request = NodePath("HTTPRequest")
 btn_door = NodePath("CanvasLayer/BuildPanel/btn_door")
+btn_floor = NodePath("CanvasLayer/BuildPanel/btn_floor")
 door_scene = ExtResource("4_5crlr")
 floor_brick_scene = ExtResource("5_hbc2u")
 
@@ -147,10 +148,10 @@ text = "保存场景"
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -324.0
+offset_left = -531.0
 offset_top = 7.000001
-offset_right = -231.72809
-offset_bottom = 123.787605
+offset_right = -378.79523
+offset_bottom = 147.91515
 grow_horizontal = 0
 scale = Vector2(3.4538648, 3.8959618)
 
@@ -185,6 +186,13 @@ offset_top = 3.0801282
 offset_right = 50.850548
 offset_bottom = 11.080128
 tooltip_text = "单门"
+
+[node name="btn_floor" type="Button" parent="CanvasLayer/BuildPanel" unique_id=719505094]
+layout_mode = 0
+offset_left = 61.090984
+offset_top = 3.0801282
+offset_right = 69.09099
+offset_bottom = 11.080128
 
 [node name="ControllPanel" type="Control" parent="CanvasLayer" unique_id=956763815]
 layout_mode = 3
