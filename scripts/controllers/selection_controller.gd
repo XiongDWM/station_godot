@@ -94,6 +94,8 @@ func toggle_panels_on_right_click(operation_panel: Control, module_panel: Contro
 func show_module_panel(target: Node3D, module_panel: Panel) -> void:
 	if not module_panel or not target:
 		return
+	if module_panel.has_method("open_for_target"):
+		module_panel.call("open_for_target", target)
 	module_panel.visible = true
 
 func show_operation_panel(target: Node3D, operation_panel: Control, camera: Camera3D) -> void:
