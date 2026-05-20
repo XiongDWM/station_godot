@@ -53,9 +53,22 @@ func handle_left_click_module(root: Node3D, block_scene: PackedScene, module_pan
 
 	if result:
 		var collider = result.collider as Node3D
+		var toggle_target := _find_toggle_open_target(collider)
+		if toggle_target:
+			toggle_target.call("toggle_open")
+			root.get_viewport().set_input_as_handled()
+			return
 		if collider and collider.scene_file_path == block_scene.resource_path:
 			selected_module_object = collider
 			show_module_panel(collider, module_panel)
+
+func _find_toggle_open_target(node: Node) -> Node:
+	var current := node
+	while current:
+		if current.has_method("toggle_open"):
+			return current
+		current = current.get_parent()
+	return null
 
 func handle_right_click_operation(root: Node3D, grid_map: GridMap, preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, operation_panel: Control) -> void:
 	var camera = root.get_node_or_null("CameraPivot/Camera3D") as Camera3D

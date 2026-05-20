@@ -9,13 +9,10 @@
 [ext_resource type="Texture2D" uid="uid://b2yp55xi6yvtr" path="res://assets/icons/wall_build.svg" id="3_wall_button_icon"]
 [ext_resource type="PackedScene" uid="uid://bmjt0aslvismt" path="res://door_object.tscn" id="4_5crlr"]
 [ext_resource type="Texture2D" uid="uid://m2m36at2lfms" path="res://assets/icons/door_build.svg" id="4_door_button_icon"]
-[ext_resource type="Texture2D" path="res://assets/icons/cabinet_build.svg" id="5_cabinet_button_icon"]
+[ext_resource type="Texture2D" uid="uid://tgyfey6t3b8i" path="res://assets/icons/cabinet_build.svg" id="5_cabinet_button_icon"]
 [ext_resource type="PackedScene" uid="uid://r83grn5ubyp0" path="res://floor_brick.tscn" id="5_hbc2u"]
 [ext_resource type="Script" uid="uid://6a8kxyf4wr6f" path="res://scripts/camera/camera_controll.gd" id="5_rf2cd"]
 [ext_resource type="Texture2D" uid="uid://dl3dmg6i55mnl" path="res://assets/icons/floor_build.svg" id="6_floor_button_icon"]
-
-[sub_resource type="CompressedTexture2D" id="CompressedTexture2D_x4av3"]
-load_path = "res://.godot/imported/odf.png-82093f801d10a8b5380e7243d9b618b2.ctex"
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_dfp46"]
 albedo_color = Color(0, 0.22658296, 0.24269372, 1)
@@ -100,6 +97,7 @@ floor_brick_scene = ExtResource("5_hbc2u")
 
 [node name="DoorObject" parent="." unique_id=1342906246 instance=ExtResource("4_5crlr")]
 visible = false
+script = null
 
 [node name="WallObject" parent="." unique_id=943236327 instance=ExtResource("2_rpqi1")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.016186833, 0.007905602, 0)
@@ -109,7 +107,6 @@ visible = false
 script = ExtResource("3_rf2cd")
 
 [node name="OdfObject" parent="." unique_id=253000038 instance=ExtResource("2_x4av3")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.026428819, 0.38161087, 0.37567163)
 visible = false
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1420836193]
@@ -147,13 +144,15 @@ scale = Vector2(0.19349854, 0.24280824)
 text = "保存场景"
 
 [node name="ModulePanel" type="Panel" parent="CanvasLayer" unique_id=252016293]
-anchors_preset = 1
-anchor_left = 1.0
+anchors_preset = -1
+anchor_left = 0.66
+anchor_top = 0.01
 anchor_right = 1.0
-offset_left = -620.0
-offset_top = 12.0
-offset_right = -12.0
-offset_bottom = 871.0
+anchor_bottom = 0.96
+offset_left = -4.3200073
+offset_top = -6.48
+offset_right = -4.3200684
+offset_bottom = -6.4799805
 grow_horizontal = 0
 theme = ExtResource("1_ui_cjk_theme")
 script = ExtResource("1_module_panel_controller")
@@ -218,7 +217,7 @@ text = "插槽个数"
 custom_minimum_size = Vector2(78, 32)
 layout_mode = 2
 min_value = 1.0
-value = 4.0
+value = 2.0
 
 [node name="ColGroup" type="VBoxContainer" parent="CanvasLayer/ModulePanel/MarginContainer/RootVBox/ConfigPanel/ConfigVbox/InputRow" unique_id=1653682322]
 layout_mode = 2
@@ -233,7 +232,7 @@ text = "插槽规格"
 custom_minimum_size = Vector2(78, 32)
 layout_mode = 2
 min_value = 1.0
-value = 3.0
+value = 6.0
 
 [node name="FacesGroup" type="VBoxContainer" parent="CanvasLayer/ModulePanel/MarginContainer/RootVBox/ConfigPanel/ConfigVbox/InputRow" unique_id=888424179]
 layout_mode = 2
@@ -248,7 +247,7 @@ text = "面"
 custom_minimum_size = Vector2(78, 32)
 layout_mode = 2
 min_value = 1.0
-value = 2.0
+value = 1.0
 
 [node name="EnumRow" type="HBoxContainer" parent="CanvasLayer/ModulePanel/MarginContainer/RootVBox/ConfigPanel/ConfigVbox" unique_id=1751207001]
 layout_mode = 2
@@ -450,10 +449,24 @@ metadata/_editor_floor_ = Vector3(0, 0, 0)
 environment = SubResource("Environment_rpqi1")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=167542007]
-transform = Transform3D(0.18276072, 0.98146564, 0.0576524, 0.3398576, -0.118093014, 0.93303317, 0.92254835, -0.15092814, -0.35514128, 8.694768, -14.312469, -38.234726)
+transform = Transform3D(0.7071068, -0.35355338, 0.6123724, 0, 0.8660254, 0.5, -0.7071068, -0.35355338, 0.6123724, 2.5, 8, 4)
+light_energy = 1.8
+shadow_enabled = true
+sky_mode = 1
+
+[node name="FrontFillLight" type="OmniLight3D" parent="." unique_id=250192377]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 3.2, 7)
+light_energy = 1.25
+omni_range = 9.0
+
+[node name="SideFillLight" type="OmniLight3D" parent="." unique_id=1548709268]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.5, 2.2, 2)
+light_color = Color(0.82, 0.9, 1, 1)
+light_energy = 0.7
+omni_range = 7.0
 
 [node name="PreviewCube" type="MeshInstance3D" parent="." unique_id=1098939959]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.6054707, 1.0457227, 2.5057166)
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 0, 0, 0)
 visible = false
 mesh = SubResource("BoxMesh_x4av3")
 

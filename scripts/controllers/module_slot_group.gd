@@ -3,9 +3,18 @@ extends PanelContainer
 const INSERT_LINE_COLOR := Color(0.15, 0.55, 0.95, 0.95)
 const INSERT_LINE_THICKNESS := 4
 const SLOT_OUTLINE_COLOR := Color(0.92, 0.26, 0.26, 0.95)
+const SLOT_SURFACE_COLOR := Color(0.13, 0.14, 0.16, 0.34)
+const SLOT_SHADOW_COLOR := Color(0.02, 0.025, 0.03, 0.38)
+const SLOT_HIGHLIGHT_COLOR := Color(1.0, 1.0, 1.0, 0.16)
 const SLOT_OUTLINE_THICKNESS := 2.0
 const SLOT_OUTLINE_DASH := 10.0
-const SLOT_OUTLINE_GAP := 6.0
+const SLOT_OUTLINE_GAP := 6.5
+const SLOT_SHADOW_OFFSET := Vector2(4.0, 5.0)
+const SLOT_CUBE_TOP_DEPTH := 14.0
+const SLOT_CUBE_TOP_SKEW := 18.0
+const METAL_TOP_HIGHLIGHT := Color(1.0, 1.0, 1.0, 0.22)
+const METAL_MID_SHADE := Color(0.18, 0.2, 0.22, 0.16)
+const METAL_BOTTOM_SHADE := Color(0.06, 0.07, 0.08, 0.18)
 
 var controller: Control
 var face_index := 0
@@ -14,6 +23,7 @@ var card_index := -1
 var slot_layout := 0
 var drag_enabled := true
 var draw_dashed_outline := true
+var draw_metal_surface := false
 var insert_indicator: ColorRect
 
 func _ready() -> void:
@@ -107,14 +117,62 @@ func _is_before_position(at_position: Vector2) -> bool:
 	return at_position.y < size.y * 0.5 if slot_layout == 0 else at_position.x < size.x * 0.5
 
 func _draw() -> void:
+	if draw_metal_surface:
+		_draw_metal_surface()
 	if not draw_dashed_outline:
 		return
 	var inset: float = SLOT_OUTLINE_THICKNESS * 0.5
 	var rect: Rect2 = Rect2(Vector2(inset, inset), size - Vector2(inset * 2.0, inset * 2.0))
+	if slot_index == 0:
+		_draw_cube_outline(rect)
+		return
+	_draw_flat_outline(rect)
+
+func _draw_flat_outline(rect: Rect2) -> void:
+	var shadow_rect := rect
+	shadow_rect.position += SLOT_SHADOW_OFFSET
+	shadow_rect.size -= SLOT_SHADOW_OFFSET
+	draw_rect(shadow_rect, SLOT_SHADOW_COLOR, true)
+	draw_rect(rect, SLOT_SURFACE_COLOR, true)
+	draw_line(rect.position, Vector2(rect.end.x, rect.position.y), SLOT_HIGHLIGHT_COLOR, 1.0)
+	draw_line(rect.position, Vector2(rect.position.x, rect.end.y), SLOT_HIGHLIGHT_COLOR, 1.0)
 	_draw_dashed_edge(rect.position, Vector2(rect.end.x, rect.position.y))
 	_draw_dashed_edge(Vector2(rect.end.x, rect.position.y), rect.end)
 	_draw_dashed_edge(rect.end, Vector2(rect.position.x, rect.end.y))
 	_draw_dashed_edge(Vector2(rect.position.x, rect.end.y), rect.position)
+
+func _draw_cube_outline(rect: Rect2) -> void:
+	var front_rect := Rect2(Vector2(rect.position.x, rect.position.y + SLOT_CUBE_TOP_DEPTH), Vector2(rect.size.x, rect.size.y - SLOT_CUBE_TOP_DEPTH))
+	var back_left := Vector2(rect.position.x + SLOT_CUBE_TOP_SKEW, rect.position.y)
+	var back_right := Vector2(rect.end.x - SLOT_CUBE_TOP_SKEW, rect.position.y)
+	var front_left := front_rect.position
+	var front_right := Vector2(front_rect.end.x, front_rect.position.y)
+	var shadow_front := front_rect
+	shadow_front.position += SLOT_SHADOW_OFFSET
+	shadow_front.size -= SLOT_SHADOW_OFFSET
+	draw_rect(shadow_front, SLOT_SHADOW_COLOR, true)
+	draw_colored_polygon([front_left, front_right, back_right, back_left], SLOT_SURFACE_COLOR)
+	draw_rect(front_rect, SLOT_SURFACE_COLOR, true)
+	draw_line(back_left, back_right, SLOT_HIGHLIGHT_COLOR, 1.0)
+	draw_line(back_left, front_left, SLOT_HIGHLIGHT_COLOR, 1.0)
+	_draw_dashed_edge(back_left, back_right)
+	_draw_dashed_edge(back_right, front_right)
+	_draw_dashed_edge(front_right, Vector2(front_rect.end.x, front_rect.end.y))
+	_draw_dashed_edge(Vector2(front_rect.end.x, front_rect.end.y), Vector2(front_rect.position.x, front_rect.end.y))
+	_draw_dashed_edge(Vector2(front_rect.position.x, front_rect.end.y), front_left)
+	_draw_dashed_edge(front_left, back_left)
+	_draw_dashed_edge(front_left, front_right)
+
+func _draw_metal_surface() -> void:
+	var rect := Rect2(Vector2(1.0, 1.0), size - Vector2(2.0, 2.0))
+	var top_height: float = maxf(2.0, rect.size.y * 0.22)
+	var middle_y: float = rect.position.y + rect.size.y * 0.48
+	var bottom_y: float = rect.position.y + rect.size.y * 0.78
+	draw_rect(Rect2(rect.position, Vector2(rect.size.x, top_height)), METAL_TOP_HIGHLIGHT, true)
+	draw_rect(Rect2(Vector2(rect.position.x, middle_y), Vector2(rect.size.x, 2.0)), METAL_MID_SHADE, true)
+	draw_rect(Rect2(Vector2(rect.position.x, bottom_y), Vector2(rect.size.x, rect.end.y - bottom_y)), METAL_BOTTOM_SHADE, true)
+	draw_line(rect.position, Vector2(rect.end.x, rect.position.y), Color(1, 1, 1, 0.35), 1.0)
+	draw_line(Vector2(rect.position.x, rect.end.y), rect.end, Color(0, 0, 0, 0.22), 1.0)
 
 func _draw_dashed_edge(from: Vector2, to: Vector2) -> void:
 	var delta: Vector2 = to - from

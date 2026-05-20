@@ -5,7 +5,6 @@ signal data_received(data)
 signal save_completed(data)
 signal request_failed(message, response_code)
 var base_url :="https://192.168.0.252/api/stationLayout"
-const TEST_STATION_ID := 2381
 var current_station_id: int = -1
 var _pending_action: String = ""
 
@@ -26,9 +25,8 @@ func bootstrap_layout(refresh_from_server: bool = true) -> bool:
 		station_id = app_state.get_station_id()
 
 	if station_id <= 0:
-		station_id = TEST_STATION_ID  # 之后改回来
-		if app_state and app_state.has_method("set_station_id"):
-			app_state.set_station_id(station_id)
+		push_warning("没有有效的 station_id 可用于加载布局")
+		return false
 
 	fetch_room_layout(station_id, refresh_from_server)
 	return true

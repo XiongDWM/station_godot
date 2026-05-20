@@ -11,29 +11,45 @@ const PORT_SHAPE_SQUARE := 1
 const SLOT_LAYOUT_HORIZONTAL := 0
 const SLOT_LAYOUT_VERTICAL := 1
 
+const DEFAULT_SLOT_COUNT := 2
+const DEFAULT_SLOT_SPEC := 6
+const DEFAULT_FACE_COUNT := 1
+const DEFAULT_PORT_SHAPE := PORT_SHAPE_SQUARE
+const DEFAULT_SLOT_LAYOUT := SLOT_LAYOUT_HORIZONTAL
+
 const SLOT_DROP_LAYOUT := SLOT_LAYOUT_HORIZONTAL
 const CARD_MENU_CLEAR := -1
 const CARD_MENU_PORT_6 := 6
 const CARD_MENU_PORT_8 := 8
 const CARD_MENU_PORT_12 := 12
 
-const CARD_PORT_SIZE := 14
-const CARD_PORT_GAP := 2
-const CARD_PADDING := 8
-const CARD_GAP := 8
-const CARD_BASE_WIDTH := 78
-const CARD_BASE_HEIGHT := 62
+const CARD_PORT_SIZE := 28
+const CARD_PORT_GAP := 18
+const CARD_PADDING := 6
+const CARD_GAP := 6
+const CARD_BASE_WIDTH := 38
+const CARD_BASE_HEIGHT := 38
 const SLOT_PADDING := 10
-const SLOT_GAP := 8
+const SLOT_CUBE_TOP_DEPTH := 14
+const SLOT_CONTENT_TOP_EXTRA := 8
+const SLOT_GAP := 6	
 const CARD_LOCK_BUTTON_SIZE := 22
 const CARD_LOCK_GAP := 4
 const CARD_ACTION_BUTTON_SIZE := 22
 const SLOT_BACKGROUND_COLOR := Color(0, 0, 0, 0)
 const CARD_BACKGROUND_COLOR := Color(0.73, 0.74, 0.76, 0.88)
 const CARD_BORDER_COLOR := Color(0.57, 0.59, 0.62, 1.0)
+const CARD_SHADOW_COLOR := Color(0.02, 0.025, 0.03, 0.36)
+const CARD_METAL_BACKGROUND_COLOR := Color(0.62, 0.66, 0.68, 0.96)
+const CARD_METAL_BORDER_COLOR := Color(0.83, 0.86, 0.87, 1.0)
 const CARD_ACTION_BG_COLOR := Color(1, 1, 1, 0.96)
 const CARD_ACTION_BORDER_COLOR := Color(0.77, 0.79, 0.82, 1.0)
 const CARD_PLACEHOLDER_PORT_COLOR := Color(1, 1, 1, 0)
+const PORT_SOCKET_BG_COLOR := Color(0.08, 0.095, 0.105, 1.0)
+const PORT_SOCKET_HOVER_BG_COLOR := Color(0.11, 0.13, 0.14, 1.0)
+const PORT_SOCKET_PRESSED_BG_COLOR := Color(0.04, 0.05, 0.055, 1.0)
+const PORT_SOCKET_BORDER_COLOR := Color(0.78, 0.82, 0.83, 0.9)
+const PORT_SOCKET_SHADOW_COLOR := Color(0.0, 0.0, 0.0, 0.45)
 
 @onready var row_input: SpinBox = $MarginContainer/RootVBox/ConfigPanel/ConfigVbox/InputRow/RowGroup/RowInput
 @onready var col_input: SpinBox = $MarginContainer/RootVBox/ConfigPanel/ConfigVbox/InputRow/ColGroup/ColInput
@@ -90,11 +106,11 @@ func _setup_option_inputs() -> void:
 	if shape_input and shape_input.item_count == 0:
 		shape_input.add_item("圆形", PORT_SHAPE_CIRCLE)
 		shape_input.add_item("方形", PORT_SHAPE_SQUARE)
-		shape_input.select(PORT_SHAPE_CIRCLE)
+		shape_input.select(DEFAULT_PORT_SHAPE)
 	if slot_layout_input and slot_layout_input.item_count == 0:
 		slot_layout_input.add_item("横向插卡", SLOT_LAYOUT_HORIZONTAL)
 		slot_layout_input.add_item("竖向插卡", SLOT_LAYOUT_VERTICAL)
-		slot_layout_input.select(SLOT_LAYOUT_HORIZONTAL)
+		slot_layout_input.select(DEFAULT_SLOT_LAYOUT)
 
 func _setup_card_context_menu() -> void:
 	card_context_menu = PopupMenu.new()
@@ -251,6 +267,7 @@ func _get_preview_minimum_size(slot_count: int, slot_spec: int) -> Vector2:
 		slot_content_height = slot_spec * card_size.y + max(0, slot_spec - 1) * CARD_GAP + SLOT_PADDING * 2.0
 	else:
 		slot_content_width = slot_spec * card_size.x + max(0, slot_spec - 1) * CARD_GAP + SLOT_PADDING * 2.0
+	slot_content_height += SLOT_CUBE_TOP_DEPTH + SLOT_CONTENT_TOP_EXTRA
 	var total_width: float = slot_content_width + 24.0
 	var total_height: float = slot_count * slot_content_height + max(0, slot_count - 1) * SLOT_GAP + 24.0
 	return Vector2(total_width, total_height)
@@ -263,6 +280,7 @@ func _create_slot_group(face_index: int, slot_index: int, slot_spec: int) -> Con
 	slot_panel.script = SLOT_GROUP_SCRIPT
 	slot_panel.drag_enabled = false
 	slot_panel.draw_dashed_outline = true
+	slot_panel.slot_index = slot_index
 	slot_panel.script = SLOT_GROUP_SCRIPT
 	slot_panel.mouse_default_cursor_shape = Control.CURSOR_ARROW
 	slot_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -289,16 +307,19 @@ func _create_slot_stylebox() -> StyleBoxFlat:
 	style_box.bg_color = SLOT_BACKGROUND_COLOR
 	style_box.set_border_width_all(0)
 	style_box.content_margin_left = SLOT_PADDING
-	style_box.content_margin_top = SLOT_PADDING
+	style_box.content_margin_top = SLOT_PADDING + SLOT_CUBE_TOP_DEPTH + SLOT_CONTENT_TOP_EXTRA
 	style_box.content_margin_right = SLOT_PADDING
 	style_box.content_margin_bottom = SLOT_PADDING
 	return style_box
 
-func _create_card_stylebox() -> StyleBoxFlat:
+func _create_card_stylebox(has_ports: bool = false) -> StyleBoxFlat:
 	var style_box := StyleBoxFlat.new()
-	style_box.bg_color = CARD_BACKGROUND_COLOR
-	style_box.border_color = CARD_BORDER_COLOR
+	style_box.bg_color = CARD_METAL_BACKGROUND_COLOR if has_ports else CARD_BACKGROUND_COLOR
+	style_box.border_color = CARD_METAL_BORDER_COLOR if has_ports else CARD_BORDER_COLOR
 	style_box.set_border_width_all(1)
+	style_box.shadow_color = CARD_SHADOW_COLOR
+	style_box.shadow_size = 5
+	style_box.shadow_offset = Vector2(2, 3)
 	style_box.corner_radius_top_left = 5
 	style_box.corner_radius_top_right = 5
 	style_box.corner_radius_bottom_left = 5
@@ -323,6 +344,8 @@ func _create_subcard_slot(face_index: int, slot_index: int, card_index: int) -> 
 	card_wrapper.alignment = BoxContainer.ALIGNMENT_CENTER
 	card_wrapper.add_theme_constant_override("separation", CARD_LOCK_GAP)
 
+	var has_ports := _get_card_port_count(face_index, slot_index, card_index) > 0
+
 	var card_panel: PanelContainer = PanelContainer.new()
 	card_panel.script = SLOT_GROUP_SCRIPT
 	card_panel.controller = self
@@ -332,9 +355,10 @@ func _create_subcard_slot(face_index: int, slot_index: int, card_index: int) -> 
 	card_panel.slot_layout = _get_slot_layout()
 	card_panel.drag_enabled = true
 	card_panel.draw_dashed_outline = false
+	card_panel.draw_metal_surface = has_ports
 	card_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	card_panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	card_panel.add_theme_stylebox_override("panel", _create_card_stylebox())
+	card_panel.add_theme_stylebox_override("panel", _create_card_stylebox(has_ports))
 	card_panel.custom_minimum_size = fixed_card_size
 	card_panel.mouse_default_cursor_shape = Control.CURSOR_DRAG if not is_card_locked(face_index, slot_index, card_index) else Control.CURSOR_ARROW
 	card_panel.gui_input.connect(_on_subcard_slot_gui_input.bind(face_index, slot_index, card_index, card_panel))
@@ -465,7 +489,7 @@ func _create_card_port_button(face_index: int, slot_index: int, card_index: int,
 	var active_port_count: int = _get_card_port_count(face_index, slot_index, card_index)
 	var is_active_port: bool = port_index < active_port_count
 	port_button.custom_minimum_size = Vector2(CARD_PORT_SIZE, CARD_PORT_SIZE)
-	port_button.flat = true
+	port_button.flat = false
 	port_button.toggle_mode = is_active_port
 	port_button.focus_mode = Control.FOCUS_NONE
 	port_button.disabled = not is_active_port
@@ -494,7 +518,13 @@ func _update_port_button(port_button: Button, face_index: int, slot_index: int, 
 	var port_color: Color = CARD_PLACEHOLDER_PORT_COLOR
 	if is_active_port:
 		port_color = Color(0.85, 0.22, 0.22, 1.0) if is_occupied else Color(0.16, 0.72, 0.29, 1.0)
-	port_button.text = "■" if _get_port_shape() == PORT_SHAPE_SQUARE else "●"
+	port_button.text = "▣" if _get_port_shape() == PORT_SHAPE_SQUARE else "◉"
+	port_button.add_theme_font_size_override("font_size", 22)
+	port_button.add_theme_stylebox_override("normal", _create_port_stylebox(is_active_port, false))
+	port_button.add_theme_stylebox_override("hover", _create_port_stylebox(is_active_port, false, true))
+	port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(is_active_port, true))
+	port_button.add_theme_stylebox_override("hover_pressed", _create_port_stylebox(is_active_port, true))
+	port_button.add_theme_stylebox_override("disabled", _create_port_stylebox(is_active_port, false))
 	port_button.add_theme_color_override("font_color", port_color)
 	port_button.add_theme_color_override("font_disabled_color", port_color)
 	port_button.add_theme_color_override("font_focus_color", port_color)
@@ -502,6 +532,29 @@ func _update_port_button(port_button: Button, face_index: int, slot_index: int, 
 	port_button.add_theme_color_override("font_hover_pressed_color", port_color)
 	port_button.add_theme_color_override("font_pressed_color", port_color)
 	port_button.tooltip_text = "%s | Face %d, 插槽 %d, 子卡 %d, 端口 %d" % ["占位" if not is_active_port else "已占用" if is_occupied else "空闲", face_index + 1, slot_index + 1, card_index + 1, port_index + 1]
+
+func _create_port_stylebox(is_active_port: bool, is_pressed: bool, is_hover: bool = false) -> StyleBoxFlat:
+	var style_box := StyleBoxFlat.new()
+	if not is_active_port:
+		style_box.bg_color = Color(1, 1, 1, 0)
+		style_box.border_color = Color(1, 1, 1, 0)
+		style_box.set_content_margin_all(0)
+		return style_box
+	style_box.bg_color = PORT_SOCKET_PRESSED_BG_COLOR if is_pressed else PORT_SOCKET_HOVER_BG_COLOR if is_hover else PORT_SOCKET_BG_COLOR
+	style_box.border_color = PORT_SOCKET_BORDER_COLOR
+	style_box.set_border_width_all(2)
+	style_box.corner_radius_top_left = 4
+	style_box.corner_radius_top_right = 4
+	style_box.corner_radius_bottom_left = 4
+	style_box.corner_radius_bottom_right = 4
+	style_box.shadow_color = PORT_SOCKET_SHADOW_COLOR
+	style_box.shadow_size = 3
+	style_box.shadow_offset = Vector2(1, 2)
+	style_box.content_margin_left = 0
+	style_box.content_margin_top = 0
+	style_box.content_margin_right = 0
+	style_box.content_margin_bottom = 1 if is_pressed else 0
+	return style_box
 
 func _on_subcard_slot_gui_input(_event: InputEvent, _face_index: int, _slot_index: int, _card_index: int, _card_panel: Control) -> void:
 	return
@@ -564,7 +617,7 @@ func _refresh_summary() -> void:
 	var slot_count: int = _get_slot_count()
 	var slot_spec: int = _get_slot_spec()
 	var total_faces: int = _get_total_faces()
-	var shape_text: String = "圆形" if _get_port_shape() == PORT_SHAPE_CIRCLE else "方形"
+	var _shape_text: String = "圆形" if _get_port_shape() == PORT_SHAPE_CIRCLE else "方形"
 	var slot_layout_text: String = "横向插卡" if _get_slot_layout() == SLOT_LAYOUT_HORIZONTAL else "竖向插卡"
 	var configured_cards: int = 0
 	var total_ports: int = 0
@@ -655,9 +708,9 @@ func _load_target_config(target: Node3D) -> void:
 	col_input.value = int(stored_config.get("slot_spec", stored_config.get("cols", _get_slot_spec())))
 	faces_input.value = int(stored_config.get("faces", _get_total_faces()))
 	if shape_input:
-		_select_option_id(shape_input, int(stored_config.get("shape", PORT_SHAPE_CIRCLE)))
+		_select_option_id(shape_input, int(stored_config.get("shape", DEFAULT_PORT_SHAPE)))
 	if slot_layout_input:
-		_select_option_id(slot_layout_input, int(stored_config.get("slot_layout", SLOT_LAYOUT_HORIZONTAL)))
+		_select_option_id(slot_layout_input, int(stored_config.get("slot_layout", DEFAULT_SLOT_LAYOUT)))
 	face_slot_cards = _sanitize_face_slot_cards(stored_config.get("face_slot_cards", []), _get_slot_count(), _get_slot_spec(), _get_total_faces())
 	face_card_locks = _sanitize_card_locks(stored_config.get("card_locks", stored_config.get("slot_locks", [])), _get_slot_count(), _get_slot_spec(), _get_total_faces())
 	current_face_index = clamp(int(stored_config.get("current_face_index", 0)), 0, max(0, _get_total_faces() - 1))
@@ -686,21 +739,24 @@ func _serialize_current_config() -> Dictionary:
 	}
 
 func _build_default_config() -> Dictionary:
+	var slot_count := DEFAULT_SLOT_COUNT
+	var slot_spec := DEFAULT_SLOT_SPEC
+	var total_faces := DEFAULT_FACE_COUNT
 	return {
-		"slot_count": int(row_input.value),
-		"slot_spec": int(col_input.value),
-		"faces": int(faces_input.value),
-		"shape": PORT_SHAPE_CIRCLE,
-		"slot_layout": SLOT_LAYOUT_HORIZONTAL,
+		"slot_count": slot_count,
+		"slot_spec": slot_spec,
+		"faces": total_faces,
+		"shape": DEFAULT_PORT_SHAPE,
+		"slot_layout": DEFAULT_SLOT_LAYOUT,
 		"current_face_index": 0,
-		"card_locks": _build_default_card_locks(int(faces_input.value), int(row_input.value), int(col_input.value)),
-		"face_slot_cards": _build_default_face_slot_cards(),
+		"card_locks": _build_default_card_locks(total_faces, slot_count, slot_spec),
+		"face_slot_cards": _build_default_face_slot_cards(total_faces, slot_count, slot_spec),
 	}
 
-func _build_default_face_slot_cards() -> Array:
+func _build_default_face_slot_cards(total_faces: int, slot_count: int, slot_spec: int) -> Array:
 	var default_faces: Array = []
-	for _face_index in range(int(faces_input.value)):
-		default_faces.append(_create_face_slot_data(int(row_input.value), int(col_input.value)))
+	for _face_index in range(total_faces):
+		default_faces.append(_create_face_slot_data(slot_count, slot_spec))
 	return default_faces
 
 func _build_default_card_locks(total_faces: int, slot_count: int, slot_spec: int) -> Array:
