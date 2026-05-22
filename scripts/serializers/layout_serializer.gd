@@ -62,7 +62,7 @@ func deserialize_items_to_scene(data: Array, root: Node, excluded_group: String 
 
 func _serialize_node3d(node: Node3D) -> Dictionary:
 	var global_xform = node.global_transform
-	return {
+	var item := {
 		"scene_path": node.scene_file_path,
 		"position": {
 			"x": global_xform.origin.x,
@@ -75,6 +75,21 @@ func _serialize_node3d(node: Node3D) -> Dictionary:
 			"z": {"x": global_xform.basis.z.x, "y": global_xform.basis.z.y, "z": global_xform.basis.z.z}
 		}
 	}
+	if node.has_method("get_persistent_id"):
+		var cabinet_id := str(node.call("get_persistent_id")).strip_edges()
+		if cabinet_id != "":
+			item["cabinet_id"] = cabinet_id
+	elif node.has_meta("module_cabinet_id"):
+		var meta_cabinet_id := str(node.get_meta("module_cabinet_id")).strip_edges()
+		if meta_cabinet_id != "":
+			item["cabinet_id"] = meta_cabinet_id
+	if node.has_method("get_serialized_state"):
+		item["custom_state"] = node.call("get_serialized_state")
+		var odf_type := _extract_odf_type(item["custom_state"])
+		if odf_type >= 0:
+			item["odf_type"] = odf_type
+			item["type"] = odf_type
+	return item
 
 func _clear_scene(root: Node, excluded_group: String) -> void:
 	for child in root.get_children():
@@ -103,6 +118,22 @@ func _instantiate_item(item: Dictionary, root: Node) -> void:
 	var basis_matrix = _dict_to_basis(item.get("basis", {}))
 	var pos = _dict_to_vec3(item.get("position", {}))
 	(new_instance as Node3D).global_transform = Transform3D(basis_matrix, pos)
+	var cabinet_id := str(item.get("cabinet_id", "")).strip_edges()
+	if cabinet_id != "":
+		new_instance.set_meta("module_cabinet_id", cabinet_id)
+	if (item.has("odf_type") or item.has("type")) and item.has("custom_state") and item["custom_state"] is Dictionary:
+		var custom_state := (item["custom_state"] as Dictionary).duplicate(true)
+		var odf_type := int(item.get("odf_type", item.get("type", 0)))
+		custom_state["odf_type"] = odf_type
+		custom_state["type"] = odf_type
+		if custom_state.has("module_config") and custom_state["module_config"] is Dictionary:
+			var module_config := (custom_state["module_config"] as Dictionary).duplicate(true)
+			module_config["odf_type"] = odf_type
+			module_config["type"] = odf_type
+			custom_state["module_config"] = module_config
+		item["custom_state"] = custom_state
+	if item.has("custom_state") and new_instance.has_method("apply_serialized_state"):
+		new_instance.call("apply_serialized_state", item.get("custom_state", {}))
 
 func _is_serializable_scene_root(node: Node, excluded_group: String) -> bool:
 	if not node is Node3D:
@@ -112,6 +143,18 @@ func _is_serializable_scene_root(node: Node, excluded_group: String) -> bool:
 	if node.scene_file_path == "":
 		return false
 	return true
+
+func _extract_odf_type(custom_state: Variant) -> int:
+	if not custom_state is Dictionary:
+		return -1
+	var state := custom_state as Dictionary
+	if state.has("odf_type") or state.has("type"):
+		return int(state.get("odf_type", state.get("type", 0)))
+	if state.has("module_config") and state["module_config"] is Dictionary:
+		var module_config := state["module_config"] as Dictionary
+		if module_config.has("odf_type") or module_config.has("type"):
+			return int(module_config.get("odf_type", module_config.get("type", 0)))
+	return -1
 
 func _dict_to_vec3(v: Dictionary) -> Vector3:
 	return Vector3(

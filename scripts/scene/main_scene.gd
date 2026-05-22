@@ -21,6 +21,7 @@ const SelectionControllerScript = preload("res://scripts/controllers/selection_c
 @export var btn_door: Button
 @export var door_scene: PackedScene
 @export var floor_brick_scene: PackedScene
+@export var preview_ac: MeshInstance3D
 
 var building_controller := BuildingControllerScript.new()
 var layout_serializer := LayoutSerializerScript.new()
@@ -51,17 +52,10 @@ func _process(_delta):
 func _unhandled_input(event):
 	if building_controller.handle_unhandled_input(self, event):
 		return
-	selection_controller.handle_unhandled_input(self, event, operation_panel, module_panel)
-
-func _input(event):
+	if selection_controller.handle_unhandled_input(self, event, operation_panel, module_panel):
+		return
 	if Input.is_key_pressed(KEY_CTRL):
 		return
-
-	if event is InputEventMouseButton and event.pressed:
-		var hovered_control := get_viewport().gui_get_hovered_control()
-		if hovered_control:
-			return
-
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if building_controller.is_active():

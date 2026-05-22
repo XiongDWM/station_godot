@@ -4,12 +4,12 @@ class_name SelectionController
 
 var selected_object: Node3D = null
 var selected_module_object: Node3D = null
+var opened_cabinet: Node = null
 
 func initialize(operation_panel: Control, module_panel: Control) -> void:
 	if operation_panel:
 		operation_panel.visible = false
-	if module_panel:
-		module_panel.visible = false
+	_hide_module_panel(module_panel)
 
 func bind_buttons(btn_rotate: Button, btn_delete: Button, target: Object, rotate_method: StringName, delete_method: StringName) -> void:
 	if btn_rotate:
@@ -18,7 +18,8 @@ func bind_buttons(btn_rotate: Button, btn_delete: Button, target: Object, rotate
 		btn_delete.pressed.connect(Callable(target, delete_method))
 
 func has_visible_panel(operation_panel: Control, module_panel: Control) -> bool:
-	return (operation_panel and operation_panel.visible) or (module_panel and module_panel.visible)
+	var preview_overlay := _get_preview_overlay(module_panel)
+	return (operation_panel and operation_panel.visible) or (module_panel and module_panel.visible) or (preview_overlay and preview_overlay.visible)
 
 func handle_escape(root: Node, operation_panel: Control, module_panel: Control) -> bool:
 	if operation_panel and operation_panel.visible:
@@ -27,8 +28,17 @@ func handle_escape(root: Node, operation_panel: Control, module_panel: Control) 
 		root.get_viewport().set_input_as_handled()
 		return true
 	if module_panel and module_panel.visible:
-		module_panel.visible = false
+		_hide_module_panel(module_panel)
 		selected_module_object = null
+		opened_cabinet = null
+		root.get_viewport().set_input_as_handled()
+		return true
+	var preview_overlay := _get_preview_overlay(module_panel)
+	if preview_overlay and preview_overlay.visible:
+		if module_panel and module_panel.has_method("close_for_current_target"):
+			module_panel.call("close_for_current_target")
+		else:
+			preview_overlay.call("hide_preview")
 		root.get_viewport().set_input_as_handled()
 		return true
 	return false
@@ -60,12 +70,35 @@ func handle_left_click_module(root: Node3D, block_scene: PackedScene, module_pan
 			return
 		if collider and collider.scene_file_path == block_scene.resource_path:
 			selected_module_object = collider
-			show_module_panel(collider, module_panel)
+			var cabinet_target := _find_cabinet_panel_target(collider)
+			if cabinet_target:
+				_close_opened_cabinet(cabinet_target)
+				opened_cabinet = cabinet_target
+				_hide_module_panel(module_panel)
+				cabinet_target.call("open_with_panel", module_panel)
+			else:
+				_close_opened_cabinet(null)
+				show_module_panel(collider, module_panel)
+			root.get_viewport().set_input_as_handled()
+
+func _close_opened_cabinet(except_cabinet: Node) -> void:
+	if opened_cabinet and opened_cabinet != except_cabinet and opened_cabinet.has_method("close_cabinet"):
+		opened_cabinet.call("close_cabinet")
+	if opened_cabinet != except_cabinet:
+		opened_cabinet = null
 
 func _find_toggle_open_target(node: Node) -> Node:
 	var current := node
 	while current:
 		if current.has_method("toggle_open"):
+			return current
+		current = current.get_parent()
+	return null
+
+func _find_cabinet_panel_target(node: Node) -> Node:
+	var current := node
+	while current:
+		if current.has_method("open_with_panel"):
 			return current
 		current = current.get_parent()
 	return null
@@ -99,8 +132,15 @@ func toggle_panels_on_right_click(operation_panel: Control, module_panel: Contro
 		selected_object = null
 		return true
 	if module_panel and module_panel.visible:
-		module_panel.visible = false
+		_hide_module_panel(module_panel)
 		selected_module_object = null
+		opened_cabinet = null
+		return true
+	var preview_overlay := _get_preview_overlay(module_panel)
+	if preview_overlay and preview_overlay.visible:
+		preview_overlay.call("hide_preview")
+		selected_module_object = null
+		opened_cabinet = null
 		return true
 	return false
 
@@ -110,6 +150,25 @@ func show_module_panel(target: Node3D, module_panel: Panel) -> void:
 	if module_panel.has_method("open_for_target"):
 		module_panel.call("open_for_target", target)
 	module_panel.visible = true
+
+func _hide_module_panel(module_panel: Control) -> void:
+	if not module_panel:
+		return
+	if module_panel.has_method("close_for_current_target"):
+		module_panel.call("close_for_current_target")
+	else:
+		module_panel.visible = false
+		_hide_preview_overlay(module_panel)
+
+func _get_preview_overlay(module_panel: Control) -> Control:
+	if not module_panel or not module_panel.get_tree() or not module_panel.get_tree().current_scene:
+		return null
+	return module_panel.get_tree().current_scene.get_node_or_null("CanvasLayer/OdfFocusPreviewOverlay") as Control
+
+func _hide_preview_overlay(module_panel: Control) -> void:
+	var preview_overlay := _get_preview_overlay(module_panel)
+	if preview_overlay and preview_overlay.has_method("hide_preview"):
+		preview_overlay.call("hide_preview")
 
 func show_operation_panel(target: Node3D, operation_panel: Control, camera: Camera3D) -> void:
 	if not operation_panel or not target or not camera:

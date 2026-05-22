@@ -1,6 +1,8 @@
 extends Panel
 
 const SLOT_GROUP_SCRIPT := preload("res://scripts/controllers/module_slot_group.gd")
+const RJ45_PORT_BUTTON_SCRIPT := preload("res://scripts/style/rj45_port_button.gd")
+const OPTICAL_PORT_BUTTON_SCRIPT := preload("res://scripts/style/optical_port_button.gd")
 const LOCK_CLOSED_ICON := preload("res://assets/icons/lock_closed.svg")
 const LOCK_OPEN_ICON := preload("res://assets/icons/lock_open.svg")
 const CARD_ACTION_ADD_ICON := preload("res://assets/icons/card_action_add.svg")
@@ -8,23 +10,42 @@ const CARD_ACTION_EDIT_ICON := preload("res://assets/icons/card_action_edit.svg"
 
 const PORT_SHAPE_CIRCLE := 0
 const PORT_SHAPE_SQUARE := 1
+const PORT_SHAPE_RJ45 := 2
 const SLOT_LAYOUT_HORIZONTAL := 0
 const SLOT_LAYOUT_VERTICAL := 1
+const ODF_TYPE_CABINET := 0
+const ODF_TYPE_RACK := 1
 
+# 机柜配置默认值
 const DEFAULT_SLOT_COUNT := 2
 const DEFAULT_SLOT_SPEC := 6
 const DEFAULT_FACE_COUNT := 1
 const DEFAULT_PORT_SHAPE := PORT_SHAPE_SQUARE
 const DEFAULT_SLOT_LAYOUT := SLOT_LAYOUT_HORIZONTAL
+const DEFAULT_ODF_TYPE := ODF_TYPE_RACK
+const CABINET_DEFAULT_SLOT_COUNT := 4
+const CABINET_DEFAULT_SLOT_SPEC := 1
+const CABINET_DEFAULT_FACE_COUNT := 1
+const CABINET_DEFAULT_PORT_SHAPE := PORT_SHAPE_RJ45
+const CABINET_DEFAULT_SLOT_LAYOUT := SLOT_LAYOUT_HORIZONTAL
 
 const SLOT_DROP_LAYOUT := SLOT_LAYOUT_HORIZONTAL
 const CARD_MENU_CLEAR := -1
 const CARD_MENU_PORT_6 := 6
 const CARD_MENU_PORT_8 := 8
 const CARD_MENU_PORT_12 := 12
+const CARD_MENU_SWITCH := 24
+const CARD_TYPE_NORMAL := "normal"
+const CARD_TYPE_SWITCH := "switch"
 
-const CARD_PORT_SIZE := 28
-const CARD_PORT_GAP := 18
+const CARD_PORT_SIZE := 26
+const CARD_PORT_GAP := 5
+const SWITCH_PORT_SIZE := 14
+const SWITCH_PORT_WIDTH := 22
+const SWITCH_PORT_HEIGHT := 17
+const SWITCH_PORT_GAP := 4
+const SWITCH_PORT_COLUMNS := 12
+const SWITCH_PORT_COUNT := 24
 const CARD_PADDING := 6
 const CARD_GAP := 6
 const CARD_BASE_WIDTH := 38
@@ -37,18 +58,19 @@ const CARD_LOCK_BUTTON_SIZE := 22
 const CARD_LOCK_GAP := 4
 const CARD_ACTION_BUTTON_SIZE := 22
 const SLOT_BACKGROUND_COLOR := Color(0, 0, 0, 0)
-const CARD_BACKGROUND_COLOR := Color(0.73, 0.74, 0.76, 0.88)
-const CARD_BORDER_COLOR := Color(0.57, 0.59, 0.62, 1.0)
+const CARD_BACKGROUND_COLOR := Color(0.78, 0.8, 0.81, 0.96)
+const CARD_BORDER_COLOR := Color(0.48, 0.5, 0.52, 1.0)
 const CARD_SHADOW_COLOR := Color(0.02, 0.025, 0.03, 0.36)
-const CARD_METAL_BACKGROUND_COLOR := Color(0.62, 0.66, 0.68, 0.96)
-const CARD_METAL_BORDER_COLOR := Color(0.83, 0.86, 0.87, 1.0)
+const CARD_METAL_BACKGROUND_COLOR := Color(0.72, 0.75, 0.76, 0.98)
+const CARD_METAL_BORDER_COLOR := Color(0.9, 0.92, 0.92, 1.0)
 const CARD_ACTION_BG_COLOR := Color(1, 1, 1, 0.96)
 const CARD_ACTION_BORDER_COLOR := Color(0.77, 0.79, 0.82, 1.0)
 const CARD_PLACEHOLDER_PORT_COLOR := Color(1, 1, 1, 0)
-const PORT_SOCKET_BG_COLOR := Color(0.08, 0.095, 0.105, 1.0)
-const PORT_SOCKET_HOVER_BG_COLOR := Color(0.11, 0.13, 0.14, 1.0)
-const PORT_SOCKET_PRESSED_BG_COLOR := Color(0.04, 0.05, 0.055, 1.0)
-const PORT_SOCKET_BORDER_COLOR := Color(0.78, 0.82, 0.83, 0.9)
+const PORT_SOCKET_BG_COLOR := Color(0.015, 0.018, 0.02, 1.0)
+const PORT_SOCKET_HOVER_BG_COLOR := Color(0.045, 0.055, 0.06, 1.0)
+const PORT_SOCKET_PRESSED_BG_COLOR := Color(0.0, 0.01, 0.014, 1.0)
+const PORT_SOCKET_BORDER_COLOR := Color(0.82, 0.86, 0.86, 0.95)
+const PORT_SOCKET_ACTIVE_BORDER_COLOR := Color(0.9, 0.16, 0.12, 1.0)
 const PORT_SOCKET_SHADOW_COLOR := Color(0.0, 0.0, 0.0, 0.45)
 
 @onready var row_input: SpinBox = $MarginContainer/RootVBox/ConfigPanel/ConfigVbox/InputRow/RowGroup/RowInput
@@ -75,8 +97,13 @@ var cabinet_configs: Dictionary = {}
 var is_loading_target_config := false
 var card_context_menu: PopupMenu
 var pending_card_context: Dictionary = {}
+var api_request: HTTPRequest
+var preview_overlay: Control
+var pending_remote_cabinet_id := ""
+var odf_type_input: OptionButton
 
 func _ready() -> void:
+	_setup_odf_type_input()
 	_setup_option_inputs()
 	_setup_card_context_menu()
 	if row_input:
@@ -89,6 +116,8 @@ func _ready() -> void:
 		shape_input.item_selected.connect(_on_visual_option_changed)
 	if slot_layout_input:
 		slot_layout_input.item_selected.connect(_on_visual_option_changed)
+	if odf_type_input:
+		odf_type_input.item_selected.connect(_on_odf_type_selected)
 	if prev_face_button:
 		prev_face_button.pressed.connect(_on_prev_face_pressed)
 	if next_face_button:
@@ -100,17 +129,47 @@ func _ready() -> void:
 	if apply_button:
 		apply_button.pressed.connect(_on_apply_pressed)
 	visibility_changed.connect(_refresh_port_view)
+	_bind_api_request()
+	_bind_preview_overlay()
 	_rebuild_slot_faces()
 
+func _bind_api_request() -> void:
+	var scene_root := get_tree().current_scene
+	if not scene_root:
+		return
+	api_request = scene_root.get_node_or_null("HTTPRequest") as HTTPRequest
+	if not api_request:
+		return
+	if api_request.has_signal("odf_detail_received") and not api_request.odf_detail_received.is_connected(_on_odf_detail_received):
+		api_request.odf_detail_received.connect(_on_odf_detail_received)
+	if api_request.has_signal("odf_detail_failed") and not api_request.odf_detail_failed.is_connected(_on_odf_detail_failed):
+		api_request.odf_detail_failed.connect(_on_odf_detail_failed)
+	if api_request.has_signal("odf_save_completed") and not api_request.odf_save_completed.is_connected(_on_odf_save_completed):
+		api_request.odf_save_completed.connect(_on_odf_save_completed)
+	if api_request.has_signal("odf_save_failed") and not api_request.odf_save_failed.is_connected(_on_odf_save_failed):
+		api_request.odf_save_failed.connect(_on_odf_save_failed)
+
+func _bind_preview_overlay() -> void:
+	var scene_root := get_tree().current_scene
+	if not scene_root:
+		return
+	preview_overlay = scene_root.get_node_or_null("CanvasLayer/OdfFocusPreviewOverlay") as Control
+
 func _setup_option_inputs() -> void:
+	if odf_type_input and odf_type_input.item_count == 0:
+		odf_type_input.add_item("机柜", ODF_TYPE_CABINET)
+		odf_type_input.add_item("机架", ODF_TYPE_RACK)
+		odf_type_input.select(DEFAULT_ODF_TYPE)
 	if shape_input and shape_input.item_count == 0:
-		shape_input.add_item("圆形", PORT_SHAPE_CIRCLE)
-		shape_input.add_item("方形", PORT_SHAPE_SQUARE)
+		shape_input.add_item("圆形（FC）", PORT_SHAPE_CIRCLE)
+		shape_input.add_item("方形（SC）", PORT_SHAPE_SQUARE)
+		shape_input.add_item("RJ45", PORT_SHAPE_RJ45)
 		shape_input.select(DEFAULT_PORT_SHAPE)
 	if slot_layout_input and slot_layout_input.item_count == 0:
 		slot_layout_input.add_item("横向插卡", SLOT_LAYOUT_HORIZONTAL)
 		slot_layout_input.add_item("竖向插卡", SLOT_LAYOUT_VERTICAL)
 		slot_layout_input.select(DEFAULT_SLOT_LAYOUT)
+	_apply_odf_type_option_constraints(_get_odf_type())
 
 func _setup_card_context_menu() -> void:
 	card_context_menu = PopupMenu.new()
@@ -118,6 +177,7 @@ func _setup_card_context_menu() -> void:
 	card_context_menu.add_item("12口", CARD_MENU_PORT_12)
 	card_context_menu.add_item("8口", CARD_MENU_PORT_8)
 	card_context_menu.add_item("6口", CARD_MENU_PORT_6)
+	card_context_menu.add_item("24口交换机", CARD_MENU_SWITCH)
 	card_context_menu.add_separator()
 	card_context_menu.add_item("清空端口", CARD_MENU_CLEAR)
 	card_context_menu.id_pressed.connect(_on_card_context_menu_selected)
@@ -134,6 +194,81 @@ func _on_visual_option_changed(_index: int) -> void:
 	_refresh_port_view()
 	_store_current_target_config()
 
+func _setup_odf_type_input() -> void:
+	var enum_row := get_node_or_null("MarginContainer/RootVBox/ConfigPanel/ConfigVbox/EnumRow") as BoxContainer
+	if not enum_row:
+		return
+	var existing := enum_row.get_node_or_null("OdfTypeGroup")
+	if existing:
+		odf_type_input = existing.get_node_or_null("OdfTypeInput") as OptionButton
+		return
+	var type_group := VBoxContainer.new()
+	type_group.name = "OdfTypeGroup"
+	type_group.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	enum_row.add_child(type_group)
+
+	var label := Label.new()
+	label.text = "类型"
+	type_group.add_child(label)
+
+	odf_type_input = OptionButton.new()
+	odf_type_input.name = "OdfTypeInput"
+	odf_type_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	type_group.add_child(odf_type_input)
+
+func _on_odf_type_selected(_index: int) -> void:
+	if is_loading_target_config:
+		return
+	_apply_odf_type_defaults(_get_odf_type())
+	_refresh_preview_overlay()
+
+func _apply_odf_type_defaults(odf_type: int) -> void:
+	is_loading_target_config = true
+	if odf_type == ODF_TYPE_CABINET:
+		if row_input:
+			row_input.value = CABINET_DEFAULT_SLOT_COUNT
+		if col_input:
+			col_input.value = CABINET_DEFAULT_SLOT_SPEC
+		if faces_input:
+			faces_input.value = CABINET_DEFAULT_FACE_COUNT
+		if shape_input:
+			_select_option_id(shape_input, CABINET_DEFAULT_PORT_SHAPE)
+		if slot_layout_input:
+			_select_option_id(slot_layout_input, CABINET_DEFAULT_SLOT_LAYOUT)
+	else:
+		if row_input:
+			row_input.value = DEFAULT_SLOT_COUNT
+		if col_input:
+			col_input.value = DEFAULT_SLOT_SPEC
+		if faces_input:
+			faces_input.value = DEFAULT_FACE_COUNT
+		if shape_input:
+			_select_option_id(shape_input, DEFAULT_PORT_SHAPE)
+		if slot_layout_input:
+			_select_option_id(slot_layout_input, DEFAULT_SLOT_LAYOUT)
+	is_loading_target_config = false
+	_apply_odf_type_option_constraints(odf_type)
+	_rebuild_slot_faces()
+
+func _apply_odf_type_option_constraints(odf_type: int) -> void:
+	if shape_input:
+		_set_option_disabled(shape_input, PORT_SHAPE_RJ45, odf_type != ODF_TYPE_CABINET)
+		shape_input.disabled = odf_type == ODF_TYPE_CABINET
+		if odf_type == ODF_TYPE_CABINET:
+			_select_option_id(shape_input, CABINET_DEFAULT_PORT_SHAPE)
+		elif shape_input.get_selected_id() == PORT_SHAPE_RJ45:
+			_select_option_id(shape_input, DEFAULT_PORT_SHAPE)
+	if slot_layout_input:
+		slot_layout_input.disabled = odf_type == ODF_TYPE_CABINET
+		if odf_type == ODF_TYPE_CABINET:
+			_select_option_id(slot_layout_input, CABINET_DEFAULT_SLOT_LAYOUT)
+
+func _set_option_disabled(option_button: OptionButton, option_id: int, disabled: bool) -> void:
+	for item_index in range(option_button.item_count):
+		if option_button.get_item_id(item_index) == option_id:
+			option_button.set_item_disabled(item_index, disabled)
+			return
+
 func _on_prev_face_pressed() -> void:
 	if current_face_index <= 0:
 		return
@@ -148,15 +283,48 @@ func _on_next_face_pressed() -> void:
 	_refresh_port_view()
 
 func _on_close_pressed() -> void:
+	close_panel_only()
+
+func close_panel_only() -> void:
 	_store_current_target_config()
 	visible = false
+	close_cabinet_if_panels_closed()
+
+func close_for_current_target() -> void:
+	_store_current_target_config()
+	if preview_overlay and preview_overlay.has_method("hide_preview"):
+		preview_overlay.call("hide_preview")
+	visible = false
+	_close_current_target_cabinet()
+
+func close_cabinet_if_panels_closed() -> void:
+	if visible:
+		return
+	if preview_overlay and preview_overlay.visible:
+		return
+	_close_current_target_cabinet()
+
+func _close_current_target_cabinet() -> void:
+	if current_target and current_target.has_method("close_cabinet"):
+		current_target.call("close_cabinet")
 
 func _on_apply_pressed() -> void:
 	var serialized_config: Dictionary = _serialize_current_config()
+	_store_current_target_config()
 	print("ModulePanel serialized config:")
-	print(JSON.stringify(serialized_config, "\t"))
+	var serialized_json := JSON.stringify(serialized_config, "\t")
+	print(serialized_json)
+	if current_target:
+		current_target.set_meta("module_config", serialized_config.duplicate(true))
+	if api_request and api_request.has_method("save_odf_detail"):
+		var cabinet_id := str(serialized_config.get("cabinet_id", "")).strip_edges()
+		if cabinet_id != "":
+			if status_label:
+				status_label.text = "正在保存 ODF 详情..."
+			api_request.call("save_odf_detail", cabinet_id, serialized_json)
+			return
 	if status_label:
-		status_label.text = "已打印当前插槽配置 JSON，后续可接存储接口"
+		status_label.text = "已打印当前插槽配置 JSON，未接入 ODF 保存接口"
 
 func _rebuild_slot_faces() -> void:
 	var total_faces: int = _get_total_faces()
@@ -203,7 +371,7 @@ func _get_slot_spec() -> int:
 func _get_port_shape() -> int:
 	if not shape_input:
 		return PORT_SHAPE_CIRCLE
-	return shape_input.get_selected_id()
+	return _normalize_shape_for_odf_type(shape_input.get_selected_id(), _get_odf_type())
 
 func _get_slot_layout() -> int:
 	if not slot_layout_input:
@@ -222,8 +390,9 @@ func _create_slot_cards(slot_spec: int) -> Array:
 		slot_cards.append(_build_card_state(0, []))
 	return slot_cards
 
-func _build_card_state(port_count: int, ports: Array) -> Dictionary:
+func _build_card_state(port_count: int, ports: Array, card_type: String = CARD_TYPE_NORMAL) -> Dictionary:
 	return {
+		"card_type": card_type,
 		"port_count": port_count,
 		"ports": ports.duplicate(),
 	}
@@ -244,9 +413,7 @@ func _create_face_card_locks(slot_count: int, slot_spec: int) -> Array:
 func _render_current_face() -> void:
 	if not port_grid:
 		return
-	for child in port_grid.get_children():
-		child.queue_free()
-	port_grid.custom_minimum_size = Vector2.ZERO
+	_clear_port_grid_now()
 	if face_slot_cards.is_empty():
 		return
 
@@ -258,6 +425,14 @@ func _render_current_face() -> void:
 
 	for slot_index in range(_get_slot_count()):
 		slot_root.add_child(_create_slot_group(current_face_index, slot_index, _get_slot_spec()))
+
+func _clear_port_grid_now() -> void:
+	if not port_grid:
+		return
+	for child in port_grid.get_children():
+		port_grid.remove_child(child)
+		child.free()
+	port_grid.custom_minimum_size = Vector2.ZERO
 
 func _get_preview_minimum_size(slot_count: int, slot_spec: int) -> Vector2:
 	var card_size: Vector2 = _get_card_slot_size(CARD_MENU_PORT_12)
@@ -274,6 +449,7 @@ func _get_preview_minimum_size(slot_count: int, slot_spec: int) -> Vector2:
 
 func _create_slot_group(face_index: int, slot_index: int, slot_spec: int) -> Control:
 	var slot_wrapper: HBoxContainer = HBoxContainer.new()
+	slot_wrapper.name = "SlotWrapper_%d_%d" % [face_index, slot_index]
 	slot_wrapper.size_flags_horizontal = Control.SIZE_FILL
 
 	var slot_panel: PanelContainer = PanelContainer.new()
@@ -291,6 +467,7 @@ func _create_slot_group(face_index: int, slot_index: int, slot_spec: int) -> Con
 		cards_root = VBoxContainer.new()
 	else:
 		cards_root = HBoxContainer.new()
+	cards_root.name = "CardsRoot_%d_%d" % [face_index, slot_index]
 	cards_root.add_theme_constant_override("separation", CARD_GAP)
 	cards_root.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	cards_root.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -339,11 +516,13 @@ func _create_subcard_slot(face_index: int, slot_index: int, card_index: int) -> 
 	else:
 		card_wrapper = HBoxContainer.new()
 		card_wrapper.custom_minimum_size = Vector2(fixed_card_size.x + max(CARD_LOCK_BUTTON_SIZE, CARD_ACTION_BUTTON_SIZE) + CARD_LOCK_GAP, fixed_card_size.y)
+	card_wrapper.name = "CardWrapper_%d_%d_%d" % [face_index, slot_index, card_index]
 	card_wrapper.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	card_wrapper.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	card_wrapper.alignment = BoxContainer.ALIGNMENT_CENTER
 	card_wrapper.add_theme_constant_override("separation", CARD_LOCK_GAP)
 
+	var is_switch_card := _is_switch_card(face_index, slot_index, card_index)
 	var has_ports := _get_card_port_count(face_index, slot_index, card_index) > 0
 
 	var card_panel: PanelContainer = PanelContainer.new()
@@ -387,23 +566,48 @@ func _create_subcard_slot(face_index: int, slot_index: int, card_index: int) -> 
 		card_wrapper.add_child(tool_column)
 		card_wrapper.add_child(card_panel)
 
-	var content: VBoxContainer = VBoxContainer.new()
+	var content: BoxContainer = HBoxContainer.new() if is_switch_card else VBoxContainer.new()
 	content.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	content.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	content.alignment = BoxContainer.ALIGNMENT_CENTER
-	content.add_theme_constant_override("separation", CARD_PORT_GAP)
+	content.add_theme_constant_override("separation", SWITCH_PORT_GAP if is_switch_card else CARD_PORT_GAP)
 	card_panel.add_child(content)
 
-	var ports_grid: GridContainer = GridContainer.new()
-	ports_grid.columns = _get_card_grid_columns(CARD_MENU_PORT_12)
-	ports_grid.add_theme_constant_override("h_separation", CARD_PORT_GAP)
-	ports_grid.add_theme_constant_override("v_separation", CARD_PORT_GAP)
-	ports_grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	for port_index in range(CARD_MENU_PORT_12):
-		ports_grid.add_child(_create_card_port_button(face_index, slot_index, card_index, port_index))
-	content.add_child(ports_grid)
+	if is_switch_card:
+		content.add_child(_create_switch_blank_space())
+		content.add_child(_create_switch_ports_grid(face_index, slot_index, card_index))
+	else:
+		var ports_grid: GridContainer = GridContainer.new()
+		ports_grid.columns = _get_card_grid_columns(CARD_MENU_PORT_12)
+		ports_grid.add_theme_constant_override("h_separation", CARD_PORT_GAP)
+		ports_grid.add_theme_constant_override("v_separation", CARD_PORT_GAP)
+		ports_grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		for port_index in range(CARD_MENU_PORT_12):
+			ports_grid.add_child(_create_card_port_button(face_index, slot_index, card_index, port_index))
+		content.add_child(ports_grid)
 
 	return card_wrapper
+
+func _create_switch_blank_space() -> Control:
+	var blank_space := PanelContainer.new()
+	blank_space.custom_minimum_size = Vector2(_get_switch_blank_width(), SWITCH_PORT_HEIGHT * 2.0 + SWITCH_PORT_GAP)
+	blank_space.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	blank_space.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	blank_space.add_theme_stylebox_override("panel", _create_switch_blank_stylebox())
+	return blank_space
+
+func _create_switch_ports_grid(face_index: int, slot_index: int, card_index: int) -> GridContainer:
+	var ports_grid := GridContainer.new()
+	ports_grid.columns = SWITCH_PORT_COLUMNS
+	ports_grid.add_theme_constant_override("h_separation", SWITCH_PORT_GAP)
+	ports_grid.add_theme_constant_override("v_separation", SWITCH_PORT_GAP)
+	ports_grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	for port_index in range(SWITCH_PORT_COUNT):
+		ports_grid.add_child(_create_switch_port_button(face_index, slot_index, card_index, port_index))
+	return ports_grid
+
+func _get_switch_blank_width() -> float:
+	return 4.0 * CARD_PORT_SIZE + 3.0 * CARD_PORT_GAP
 
 func _create_card_lock_button(face_index: int, slot_index: int, card_index: int, card_panel: PanelContainer) -> Button:
 	var lock_button: Button = Button.new()
@@ -485,9 +689,10 @@ func _get_card_grid_dimensions(port_count: int) -> Vector2i:
 	return Vector2i(1, effective_port_count)
 
 func _create_card_port_button(face_index: int, slot_index: int, card_index: int, port_index: int) -> Button:
-	var port_button: Button = Button.new()
 	var active_port_count: int = _get_card_port_count(face_index, slot_index, card_index)
 	var is_active_port: bool = port_index < active_port_count
+	var use_rj45_style := _get_odf_type() == ODF_TYPE_CABINET and _get_port_shape() == PORT_SHAPE_RJ45 and is_active_port
+	var port_button: Button = RJ45_PORT_BUTTON_SCRIPT.new() if use_rj45_style else OPTICAL_PORT_BUTTON_SCRIPT.new() if is_active_port else Button.new()
 	port_button.custom_minimum_size = Vector2(CARD_PORT_SIZE, CARD_PORT_SIZE)
 	port_button.flat = false
 	port_button.toggle_mode = is_active_port
@@ -500,6 +705,17 @@ func _create_card_port_button(face_index: int, slot_index: int, card_index: int,
 		port_button.toggled.connect(_on_card_port_toggled.bind(face_index, slot_index, card_index, port_index, port_button))
 	return port_button
 
+func _create_switch_port_button(face_index: int, slot_index: int, card_index: int, port_index: int) -> Button:
+	var port_button: Button = RJ45_PORT_BUTTON_SCRIPT.new()
+	port_button.custom_minimum_size = Vector2(SWITCH_PORT_WIDTH, SWITCH_PORT_HEIGHT)
+	port_button.flat = false
+	port_button.toggle_mode = true
+	port_button.focus_mode = Control.FOCUS_NONE
+	port_button.button_pressed = _get_card_port_state(face_index, slot_index, card_index, port_index)
+	_update_switch_port_button(port_button, face_index, slot_index, card_index, port_index)
+	port_button.toggled.connect(_on_card_port_toggled.bind(face_index, slot_index, card_index, port_index, port_button))
+	return port_button
+
 func _on_card_port_toggled(pressed: bool, face_index: int, slot_index: int, card_index: int, port_index: int, port_button: Button) -> void:
 	var card_state: Dictionary = _get_card_state(face_index, slot_index, card_index)
 	var ports: Array = card_state.get("ports", [])
@@ -508,23 +724,75 @@ func _on_card_port_toggled(pressed: bool, face_index: int, slot_index: int, card
 	ports[port_index] = pressed
 	card_state["ports"] = ports
 	face_slot_cards[face_index][slot_index][card_index] = card_state
-	_update_port_button(port_button, face_index, slot_index, card_index, port_index)
+	if _is_switch_card(face_index, slot_index, card_index):
+		_update_switch_port_button(port_button, face_index, slot_index, card_index, port_index)
+	else:
+		_update_port_button(port_button, face_index, slot_index, card_index, port_index)
 	_refresh_summary()
 	_store_current_target_config()
+
+func _update_switch_port_button(port_button: Button, face_index: int, slot_index: int, card_index: int, port_index: int) -> void:
+	var is_occupied: bool = port_button.button_pressed
+	var port_color: Color = Color(0.9, 0.16, 0.12, 1.0) if is_occupied else Color(0.18, 0.2, 0.2, 1.0)
+	port_button.text = ""
+	if port_button.has_method("set_port_visual"):
+		port_button.call("set_port_visual", port_index < SWITCH_PORT_COLUMNS, is_occupied)
+	port_button.add_theme_stylebox_override("normal", _create_port_stylebox(false, false))
+	port_button.add_theme_stylebox_override("hover", _create_port_stylebox(false, false))
+	port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(false, false))
+	port_button.add_theme_stylebox_override("hover_pressed", _create_port_stylebox(false, false))
+	port_button.add_theme_color_override("font_color", port_color)
+	port_button.add_theme_color_override("font_focus_color", port_color)
+	port_button.add_theme_color_override("font_hover_color", port_color)
+	port_button.add_theme_color_override("font_hover_pressed_color", port_color)
+	port_button.add_theme_color_override("font_pressed_color", port_color)
+	port_button.tooltip_text = "%s | Face %d, 插槽 %d, 交换机子卡 %d, 端口 %d" % ["已占用" if is_occupied else "空闲", face_index + 1, slot_index + 1, card_index + 1, port_index + 1]
 
 func _update_port_button(port_button: Button, face_index: int, slot_index: int, card_index: int, port_index: int) -> void:
 	var is_active_port: bool = port_index < _get_card_port_count(face_index, slot_index, card_index)
 	var is_occupied: bool = port_button.button_pressed
 	var port_color: Color = CARD_PLACEHOLDER_PORT_COLOR
+	if not is_active_port:
+		port_button.text = ""
+		port_button.add_theme_stylebox_override("normal", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("hover", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("hover_pressed", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("disabled", _create_port_stylebox(false, false))
+		port_button.add_theme_color_override("font_color", port_color)
+		port_button.add_theme_color_override("font_disabled_color", port_color)
+		port_button.add_theme_color_override("font_focus_color", port_color)
+		port_button.add_theme_color_override("font_hover_color", port_color)
+		port_button.add_theme_color_override("font_hover_pressed_color", port_color)
+		port_button.add_theme_color_override("font_pressed_color", port_color)
+		port_button.tooltip_text = "占位 | Face %d, 插槽 %d, 子卡 %d, 端口 %d" % [face_index + 1, slot_index + 1, card_index + 1, port_index + 1]
+		return
 	if is_active_port:
-		port_color = Color(0.85, 0.22, 0.22, 1.0) if is_occupied else Color(0.16, 0.72, 0.29, 1.0)
-	port_button.text = "▣" if _get_port_shape() == PORT_SHAPE_SQUARE else "◉"
-	port_button.add_theme_font_size_override("font_size", 22)
-	port_button.add_theme_stylebox_override("normal", _create_port_stylebox(is_active_port, false))
-	port_button.add_theme_stylebox_override("hover", _create_port_stylebox(is_active_port, false, true))
-	port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(is_active_port, true))
-	port_button.add_theme_stylebox_override("hover_pressed", _create_port_stylebox(is_active_port, true))
-	port_button.add_theme_stylebox_override("disabled", _create_port_stylebox(is_active_port, false))
+		port_color = Color(0.9, 0.16, 0.12, 1.0) if is_occupied else Color(0.16, 0.72, 0.29, 1.0)
+	if port_button.has_method("set_optical_visual"):
+		port_button.text = ""
+		port_button.call("set_optical_visual", _get_port_shape(), is_occupied)
+		port_button.add_theme_stylebox_override("normal", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("hover", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("hover_pressed", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("disabled", _create_port_stylebox(false, false))
+	elif port_button.has_method("set_port_visual"):
+		port_button.text = ""
+		port_button.call("set_port_visual", true, is_occupied)
+		port_button.add_theme_stylebox_override("normal", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("hover", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("hover_pressed", _create_port_stylebox(false, false))
+		port_button.add_theme_stylebox_override("disabled", _create_port_stylebox(false, false))
+	else:
+		port_button.text = "▣" if _get_port_shape() == PORT_SHAPE_SQUARE else "◉"
+		port_button.add_theme_font_size_override("font_size", 22)
+		port_button.add_theme_stylebox_override("normal", _create_port_stylebox(is_active_port, false, false, is_occupied))
+		port_button.add_theme_stylebox_override("hover", _create_port_stylebox(is_active_port, false, true, is_occupied))
+		port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(is_active_port, true, false, is_occupied))
+		port_button.add_theme_stylebox_override("hover_pressed", _create_port_stylebox(is_active_port, true, true, is_occupied))
+		port_button.add_theme_stylebox_override("disabled", _create_port_stylebox(is_active_port, false, false, is_occupied))
 	port_button.add_theme_color_override("font_color", port_color)
 	port_button.add_theme_color_override("font_disabled_color", port_color)
 	port_button.add_theme_color_override("font_focus_color", port_color)
@@ -533,7 +801,7 @@ func _update_port_button(port_button: Button, face_index: int, slot_index: int, 
 	port_button.add_theme_color_override("font_pressed_color", port_color)
 	port_button.tooltip_text = "%s | Face %d, 插槽 %d, 子卡 %d, 端口 %d" % ["占位" if not is_active_port else "已占用" if is_occupied else "空闲", face_index + 1, slot_index + 1, card_index + 1, port_index + 1]
 
-func _create_port_stylebox(is_active_port: bool, is_pressed: bool, is_hover: bool = false) -> StyleBoxFlat:
+func _create_port_stylebox(is_active_port: bool, is_pressed: bool, is_hover: bool = false, is_occupied: bool = false) -> StyleBoxFlat:
 	var style_box := StyleBoxFlat.new()
 	if not is_active_port:
 		style_box.bg_color = Color(1, 1, 1, 0)
@@ -541,23 +809,39 @@ func _create_port_stylebox(is_active_port: bool, is_pressed: bool, is_hover: boo
 		style_box.set_content_margin_all(0)
 		return style_box
 	style_box.bg_color = PORT_SOCKET_PRESSED_BG_COLOR if is_pressed else PORT_SOCKET_HOVER_BG_COLOR if is_hover else PORT_SOCKET_BG_COLOR
-	style_box.border_color = PORT_SOCKET_BORDER_COLOR
-	style_box.set_border_width_all(2)
-	style_box.corner_radius_top_left = 4
-	style_box.corner_radius_top_right = 4
-	style_box.corner_radius_bottom_left = 4
-	style_box.corner_radius_bottom_right = 4
+	style_box.border_color = PORT_SOCKET_ACTIVE_BORDER_COLOR if is_occupied else PORT_SOCKET_BORDER_COLOR
+	style_box.border_width_left = 2
+	style_box.border_width_top = 4
+	style_box.border_width_right = 2
+	style_box.border_width_bottom = 2
+	style_box.corner_radius_top_left = 2
+	style_box.corner_radius_top_right = 2
+	style_box.corner_radius_bottom_left = 2
+	style_box.corner_radius_bottom_right = 2
 	style_box.shadow_color = PORT_SOCKET_SHADOW_COLOR
-	style_box.shadow_size = 3
-	style_box.shadow_offset = Vector2(1, 2)
-	style_box.content_margin_left = 0
-	style_box.content_margin_top = 0
-	style_box.content_margin_right = 0
-	style_box.content_margin_bottom = 1 if is_pressed else 0
+	style_box.shadow_size = 2
+	style_box.shadow_offset = Vector2(1, 1)
+	style_box.content_margin_left = 1
+	style_box.content_margin_top = 4
+	style_box.content_margin_right = 1
+	style_box.content_margin_bottom = 1
 	return style_box
 
-func _on_subcard_slot_gui_input(_event: InputEvent, _face_index: int, _slot_index: int, _card_index: int, _card_panel: Control) -> void:
-	return
+func _create_switch_blank_stylebox() -> StyleBoxFlat:
+	var style_box := StyleBoxFlat.new()
+	style_box.bg_color = Color(0.12, 0.13, 0.13, 1.0)
+	style_box.border_color = Color(0.8, 0.83, 0.83, 0.85)
+	style_box.set_border_width_all(1)
+	style_box.corner_radius_top_left = 2
+	style_box.corner_radius_top_right = 2
+	style_box.corner_radius_bottom_left = 2
+	style_box.corner_radius_bottom_right = 2
+	return style_box
+
+func _on_subcard_slot_gui_input(event: InputEvent, face_index: int, slot_index: int, card_index: int, card_panel: Control) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+		_show_card_context_menu(face_index, slot_index, card_index, card_panel.get_screen_position() + event.position)
+		card_panel.accept_event()
 
 func _show_card_context_menu(face_index: int, slot_index: int, card_index: int, popup_position: Vector2) -> void:
 	pending_card_context = {
@@ -572,22 +856,36 @@ func _show_card_context_menu(face_index: int, slot_index: int, card_index: int, 
 func _on_card_context_menu_selected(port_count: int) -> void:
 	if pending_card_context.is_empty():
 		return
-	if port_count == CARD_MENU_CLEAR:
-		port_count = 0
-	_set_card_port_count(
-		int(pending_card_context.get("face_index", current_face_index)),
-		int(pending_card_context.get("slot_index", 0)),
-		int(pending_card_context.get("card_index", 0)),
-		port_count
-	)
+	var face_index := int(pending_card_context.get("face_index", current_face_index))
+	var slot_index := int(pending_card_context.get("slot_index", 0))
+	var card_index := int(pending_card_context.get("card_index", 0))
+	if port_count == CARD_MENU_SWITCH:
+		_set_switch_card(face_index, slot_index, card_index)
+	else:
+		if port_count == CARD_MENU_CLEAR:
+			port_count = 0
+		_set_card_port_count(
+			face_index,
+			slot_index,
+			card_index,
+			port_count
+		)
 	pending_card_context.clear()
 	_refresh_port_view()
 	_store_current_target_config()
 
 func _set_card_port_count(face_index: int, slot_index: int, card_index: int, port_count: int) -> void:
 	var card_state: Dictionary = _get_card_state(face_index, slot_index, card_index)
+	card_state["card_type"] = CARD_TYPE_NORMAL
 	card_state["port_count"] = port_count
 	card_state["ports"] = _resize_port_state(card_state.get("ports", []), port_count)
+	face_slot_cards[face_index][slot_index][card_index] = card_state
+
+func _set_switch_card(face_index: int, slot_index: int, card_index: int) -> void:
+	var card_state: Dictionary = _get_card_state(face_index, slot_index, card_index)
+	card_state["card_type"] = CARD_TYPE_SWITCH
+	card_state["port_count"] = SWITCH_PORT_COUNT
+	card_state["ports"] = _resize_port_state(card_state.get("ports", []), SWITCH_PORT_COUNT)
 	face_slot_cards[face_index][slot_index][card_index] = card_state
 
 func _resize_port_state(existing_ports: Variant, port_count: int) -> Array:
@@ -608,6 +906,9 @@ func _get_card_state(face_index: int, slot_index: int, card_index: int) -> Dicti
 
 func _get_card_port_count(face_index: int, slot_index: int, card_index: int) -> int:
 	return int(_get_card_state(face_index, slot_index, card_index).get("port_count", 0))
+
+func _is_switch_card(face_index: int, slot_index: int, card_index: int) -> bool:
+	return str(_get_card_state(face_index, slot_index, card_index).get("card_type", CARD_TYPE_NORMAL)) == CARD_TYPE_SWITCH
 
 func _get_card_port_state(face_index: int, slot_index: int, card_index: int, port_index: int) -> bool:
 	var ports: Array = _get_card_state(face_index, slot_index, card_index).get("ports", [])
@@ -689,7 +990,10 @@ func open_for_target(target: Node3D) -> void:
 		_store_current_target_config()
 	current_target = target
 	_load_target_config(target)
+	if preview_overlay and preview_overlay.has_method("show_for_target"):
+		preview_overlay.call("show_for_target", target)
 	visible = true
+	_request_remote_target_config(target)
 
 func _load_target_config(target: Node3D) -> void:
 	var cabinet_id: String = _ensure_target_id(target)
@@ -702,20 +1006,104 @@ func _load_target_config(target: Node3D) -> void:
 		stored_config = _build_default_config()
 		cabinet_configs[cabinet_id] = stored_config.duplicate(true)
 		target.set_meta("module_config", stored_config.duplicate(true))
+	_apply_target_config(stored_config)
+
+func _apply_target_config(stored_config: Dictionary) -> void:
+	if stored_config.is_empty():
+		return
 
 	is_loading_target_config = true
-	row_input.value = int(stored_config.get("slot_count", stored_config.get("rows", _get_slot_count())))
-	col_input.value = int(stored_config.get("slot_spec", stored_config.get("cols", _get_slot_spec())))
-	faces_input.value = int(stored_config.get("faces", _get_total_faces()))
+	if odf_type_input:
+		_select_option_id(odf_type_input, int(stored_config.get("odf_type", stored_config.get("type", DEFAULT_ODF_TYPE))))
+	var odf_type := _get_odf_type()
+	row_input.value = int(stored_config.get("slot_count", stored_config.get("rows", _get_default_slot_count_for_type(odf_type))))
+	col_input.value = int(stored_config.get("slot_spec", stored_config.get("cols", _get_default_slot_spec_for_type(odf_type))))
+	faces_input.value = int(stored_config.get("faces", _get_default_face_count_for_type(odf_type)))
 	if shape_input:
-		_select_option_id(shape_input, int(stored_config.get("shape", DEFAULT_PORT_SHAPE)))
+		_select_option_id(shape_input, _normalize_shape_for_odf_type(int(stored_config.get("shape", _get_default_port_shape_for_type(odf_type))), odf_type))
 	if slot_layout_input:
-		_select_option_id(slot_layout_input, int(stored_config.get("slot_layout", DEFAULT_SLOT_LAYOUT)))
+		_select_option_id(slot_layout_input, int(stored_config.get("slot_layout", _get_default_slot_layout_for_type(odf_type))))
+	_apply_odf_type_option_constraints(odf_type)
 	face_slot_cards = _sanitize_face_slot_cards(stored_config.get("face_slot_cards", []), _get_slot_count(), _get_slot_spec(), _get_total_faces())
 	face_card_locks = _sanitize_card_locks(stored_config.get("card_locks", stored_config.get("slot_locks", [])), _get_slot_count(), _get_slot_spec(), _get_total_faces())
 	current_face_index = clamp(int(stored_config.get("current_face_index", 0)), 0, max(0, _get_total_faces() - 1))
 	is_loading_target_config = false
 	_refresh_port_view()
+
+func _request_remote_target_config(target: Node3D) -> void:
+	var cabinet_id := _ensure_target_id(target)
+	pending_remote_cabinet_id = cabinet_id
+	if not api_request or not api_request.has_method("fetch_odf_detail"):
+		pending_remote_cabinet_id = ""
+		return
+	if status_label:
+		status_label.text = "正在加载 ODF 详情..."
+	api_request.call("fetch_odf_detail", cabinet_id)
+
+func _on_odf_detail_received(odf_id: String, payload: Variant) -> void:
+	if odf_id != pending_remote_cabinet_id:
+		return
+	if not current_target or _ensure_target_id(current_target) != odf_id:
+		return
+	pending_remote_cabinet_id = ""
+	var remote_config := _extract_odf_config(payload)
+	push_warning("Received ODF config for cabinet_id %s: %s" % [odf_id, str(remote_config)])
+	if remote_config.is_empty():
+		if status_label:
+			status_label.text = "未返回 ODF 详情，继续使用当前配置"
+		return
+	cabinet_configs[odf_id] = remote_config.duplicate(true)
+	current_target.set_meta("module_config", remote_config.duplicate(true))
+	_apply_target_config(remote_config)
+	_refresh_preview_overlay()
+	if status_label:
+		status_label.text = "已加载 ODF 详情"
+
+func _on_odf_detail_failed(odf_id: String, _message: String, _response_code: int) -> void:
+	if odf_id != pending_remote_cabinet_id:
+		return
+	pending_remote_cabinet_id = ""
+	if status_label:
+		status_label.text = "ODF 详情加载失败，已使用当前配置"
+
+func _on_odf_save_completed(odf_id: String, _payload: Variant) -> void:
+	if not current_target or _ensure_target_id(current_target) != odf_id:
+		return
+	if status_label:
+		status_label.text = "ODF 详情已保存"
+
+func _on_odf_save_failed(odf_id: String, _message: String, _response_code: int) -> void:
+	if not current_target or _ensure_target_id(current_target) != odf_id:
+		return
+	if status_label:
+		status_label.text = "ODF 详情保存失败"
+
+func _extract_odf_config(payload: Variant) -> Dictionary:
+	match typeof(payload):
+		TYPE_DICTIONARY:
+			var payload_dict := payload as Dictionary
+			if _looks_like_odf_config(payload_dict):
+				return payload_dict.duplicate(true)
+			for key in ["json", "odf_json", "config", "data", "result"]:
+				if payload_dict.has(key):
+					var nested_config := _extract_odf_config(payload_dict[key])
+					if not nested_config.is_empty():
+						return nested_config
+			for nested_value in payload_dict.values():
+				var nested_config := _extract_odf_config(nested_value)
+				if not nested_config.is_empty():
+					return nested_config
+		TYPE_STRING:
+			var normalized := str(payload).strip_edges()
+			if normalized == "":
+				return {}
+			var json := JSON.new()
+			if json.parse(normalized) == OK:
+				return _extract_odf_config(json.data)
+	return {}
+
+func _looks_like_odf_config(payload: Dictionary) -> bool:
+	return payload.has("face_slot_cards") or payload.has("card_locks") or payload.has("slot_count") or payload.has("slot_spec") or payload.has("faces")
 
 func _store_current_target_config() -> void:
 	if not current_target or is_loading_target_config:
@@ -725,29 +1113,44 @@ func _store_current_target_config() -> void:
 	cabinet_configs[cabinet_id] = config.duplicate(true)
 	current_target.set_meta("module_config", config.duplicate(true))
 
+func _refresh_preview_overlay() -> void:
+	if current_target and preview_overlay and preview_overlay.visible and preview_overlay.has_method("show_for_target"):
+		preview_overlay.call("show_for_target", current_target)
+
 func _serialize_current_config() -> Dictionary:
+	var cabinet_id := _ensure_target_id(current_target) if current_target else ""
+	var odf_type := _get_odf_type()
+	var port_shape := _normalize_shape_for_odf_type(_get_port_shape(), odf_type)
+	var slot_layout := _get_slot_layout()
+	if odf_type == ODF_TYPE_CABINET:
+		slot_layout = CABINET_DEFAULT_SLOT_LAYOUT
 	return {
-		"odf_id": str(current_target.get_instance_id()) if current_target else "",
+		"odf_id": cabinet_id,
+		"cabinet_id": cabinet_id,
+		"odf_type": odf_type,
+		"type": odf_type,
 		"slot_count": _get_slot_count(),
 		"slot_spec": _get_slot_spec(),
 		"faces": _get_total_faces(),
-		"shape": _get_port_shape(),
-		"slot_layout": _get_slot_layout(),
+		"shape": port_shape,
+		"slot_layout": slot_layout,
 		"current_face_index": current_face_index,
 		"card_locks": face_card_locks.duplicate(true),
 		"face_slot_cards": face_slot_cards.duplicate(true),
 	}
 
-func _build_default_config() -> Dictionary:
-	var slot_count := DEFAULT_SLOT_COUNT
-	var slot_spec := DEFAULT_SLOT_SPEC
-	var total_faces := DEFAULT_FACE_COUNT
+func _build_default_config(odf_type: int = DEFAULT_ODF_TYPE) -> Dictionary:
+	var slot_count := _get_default_slot_count_for_type(odf_type)
+	var slot_spec := _get_default_slot_spec_for_type(odf_type)
+	var total_faces := _get_default_face_count_for_type(odf_type)
 	return {
 		"slot_count": slot_count,
 		"slot_spec": slot_spec,
 		"faces": total_faces,
-		"shape": DEFAULT_PORT_SHAPE,
-		"slot_layout": DEFAULT_SLOT_LAYOUT,
+		"odf_type": odf_type,
+		"type": odf_type,
+		"shape": _get_default_port_shape_for_type(odf_type),
+		"slot_layout": _get_default_slot_layout_for_type(odf_type),
 		"current_face_index": 0,
 		"card_locks": _build_default_card_locks(total_faces, slot_count, slot_spec),
 		"face_slot_cards": _build_default_face_slot_cards(total_faces, slot_count, slot_spec),
@@ -781,10 +1184,15 @@ func _sanitize_face_slot_cards(raw_cards: Variant, slot_count: int, slot_spec: i
 				var source_card: Dictionary = {}
 				if card_index < source_slot.size() and source_slot[card_index] is Dictionary:
 					source_card = source_slot[card_index]
+				var card_type := str(source_card.get("card_type", CARD_TYPE_NORMAL))
 				var port_count := int(source_card.get("port_count", 0))
-				if port_count != CARD_MENU_PORT_12 and port_count != CARD_MENU_PORT_8 and port_count != CARD_MENU_PORT_6:
+				if card_type == CARD_TYPE_SWITCH:
+					port_count = SWITCH_PORT_COUNT
+				else:
+					card_type = CARD_TYPE_NORMAL
+				if card_type == CARD_TYPE_NORMAL and port_count != CARD_MENU_PORT_12 and port_count != CARD_MENU_PORT_8 and port_count != CARD_MENU_PORT_6:
 					port_count = 0
-				sanitized_cards.append(_build_card_state(port_count, _resize_port_state(source_card.get("ports", []), port_count)))
+				sanitized_cards.append(_build_card_state(port_count, _resize_port_state(source_card.get("ports", []), port_count), card_type))
 			sanitized_slots.append(sanitized_cards)
 		sanitized_faces.append(sanitized_slots)
 	return sanitized_faces
@@ -813,10 +1221,41 @@ func _select_option_id(option_button: OptionButton, option_id: int) -> void:
 		if option_button.get_item_id(item_index) == option_id:
 			option_button.select(item_index)
 			return
+	if option_button.item_count > 0:
+		option_button.select(0)
+
+func _get_odf_type() -> int:
+	if not odf_type_input:
+		return DEFAULT_ODF_TYPE
+	return odf_type_input.get_selected_id()
+
+func _normalize_shape_for_odf_type(shape: int, odf_type: int) -> int:
+	if odf_type == ODF_TYPE_CABINET:
+		return CABINET_DEFAULT_PORT_SHAPE
+	if shape == PORT_SHAPE_RJ45:
+		return DEFAULT_PORT_SHAPE
+	return shape
+
+func _get_default_slot_count_for_type(odf_type: int) -> int:
+	return CABINET_DEFAULT_SLOT_COUNT if odf_type == ODF_TYPE_CABINET else DEFAULT_SLOT_COUNT
+
+func _get_default_slot_spec_for_type(odf_type: int) -> int:
+	return CABINET_DEFAULT_SLOT_SPEC if odf_type == ODF_TYPE_CABINET else DEFAULT_SLOT_SPEC
+
+func _get_default_face_count_for_type(odf_type: int) -> int:
+	return CABINET_DEFAULT_FACE_COUNT if odf_type == ODF_TYPE_CABINET else DEFAULT_FACE_COUNT
+
+func _get_default_port_shape_for_type(odf_type: int) -> int:
+	return CABINET_DEFAULT_PORT_SHAPE if odf_type == ODF_TYPE_CABINET else DEFAULT_PORT_SHAPE
+
+func _get_default_slot_layout_for_type(odf_type: int) -> int:
+	return CABINET_DEFAULT_SLOT_LAYOUT if odf_type == ODF_TYPE_CABINET else DEFAULT_SLOT_LAYOUT
 
 func _ensure_target_id(target: Node3D) -> String:
+	if target.has_method("ensure_persistent_id"):
+		return str(target.call("ensure_persistent_id"))
 	if target.has_meta("module_cabinet_id"):
 		return str(target.get_meta("module_cabinet_id"))
-	var cabinet_id: String = "cabinet_%s_%s" % [target.get_instance_id(), Time.get_ticks_usec()]
+	var cabinet_id: String = "cab_%013d_%s" % [int(Time.get_unix_time_from_system() * 1000.0), str(target.get_instance_id())]
 	target.set_meta("module_cabinet_id", cabinet_id)
 	return cabinet_id

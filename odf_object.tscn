@@ -1,13 +1,15 @@
 [gd_scene format=3 uid="uid://ckw6h3knil4se"]
 
-[ext_resource type="PackedScene" uid="uid://vqde72bswiaq" path="res://assets/models/odf/odf.glb" id="1_odf_model"]
+[ext_resource type="Script" uid="uid://bwbstj72xyt50" path="res://scripts/controllers/odf_cabinet_controller.gd" id="1_odf_cabinet_controller"]
+[ext_resource type="PackedScene" uid="uid://pay5ff4yjq25" path="res://assets/models/jigui/jigui.fbx" id="2_jigui_model"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_twsj0"]
 size = Vector3(1, 2, 0.5)
 
 [node name="OdfObject" type="StaticBody3D" unique_id=2020264288]
+script = ExtResource("1_odf_cabinet_controller")
 
-[node name="object_odf" parent="." unique_id=548667591 instance=ExtResource("1_odf_model")]
+[node name="object_odf" parent="." unique_id=548667591 instance=ExtResource("2_jigui_model")]
 
 [node name="odf_colision" type="CollisionShape3D" parent="." unique_id=1933156549]
 shape = SubResource("BoxShape3D_twsj0")

@@ -41,6 +41,7 @@ func bootstrap() -> void:
 func save_layoutdata() -> String:
 	if not root or not layout_serializer:
 		return ""
+	_ensure_layout_node_ids()
 	var layout_data_array = layout_serializer.serialize_scene(root)
 	var json_string = JSON.stringify(layout_data_array, "  ")
 	print("布局数据:\n", json_string)
@@ -51,6 +52,26 @@ func save_layoutdata() -> String:
 	if http_request and http_request.has_method("save_layout_data"):
 		http_request.save_layout_data(json_string, current_station_id)
 	return json_string
+
+func _ensure_layout_node_ids() -> void:
+	if not root:
+		return
+	for child in root.get_children():
+		if not child is Node3D:
+			continue
+		var node := child as Node3D
+		if node.scene_file_path == "" or node.is_in_group("preview"):
+			continue
+		if node.has_method("ensure_persistent_id"):
+			node.call("ensure_persistent_id")
+		elif node.has_meta("module_config") and not node.has_meta("module_cabinet_id"):
+			node.set_meta("module_cabinet_id", _generate_fallback_cabinet_id())
+
+func _generate_fallback_cabinet_id() -> String:
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var timestamp_ms := int(Time.get_unix_time_from_system() * 1000.0)
+	return "cab_%013d_%08x%08x" % [timestamp_ms, rng.randi(), rng.randi()]
 
 func _get_app_state() -> Node:
 	if not root:

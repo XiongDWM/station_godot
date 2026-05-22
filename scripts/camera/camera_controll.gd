@@ -21,6 +21,8 @@ func _ready():
 func _input(event):
 	if not camera:
 		return
+	if _is_preview_consuming_input(event):
+		return
 
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
@@ -46,3 +48,12 @@ func _update_camera_distance(target_dist: float):
 	if camera:
 		var current_dir = camera.position.normalized()
 		camera.position = current_dir * target_dist
+
+func _is_preview_consuming_input(event: InputEvent) -> bool:
+	var scene_root := get_tree().current_scene
+	if not scene_root:
+		return false
+	var preview_overlay := scene_root.get_node_or_null("CanvasLayer/OdfFocusPreviewOverlay")
+	if preview_overlay and preview_overlay.has_method("should_block_main_scene_input"):
+		return bool(preview_overlay.call("should_block_main_scene_input", event))
+	return false

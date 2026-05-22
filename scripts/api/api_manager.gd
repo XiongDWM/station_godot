@@ -4,9 +4,15 @@ signal station_id_changed(station_id)
 signal data_received(data)
 signal save_completed(data)
 signal request_failed(message, response_code)
+signal odf_detail_received(odf_id, data)
+signal odf_detail_failed(odf_id, message, response_code)
+signal odf_save_completed(odf_id, data)
+signal odf_save_failed(odf_id, message, response_code)
 var base_url :="https://192.168.0.252/api/stationLayout"
+var odf_base_url := "https://192.168.0.252/api/stationLayoutOdf"
 var current_station_id: int = -1
 var _pending_action: String = ""
+var _pending_odf_id: String = ""
 
 func _ready() -> void:
 	if not request_completed.is_connected(_on_request_completed):
@@ -54,26 +60,98 @@ func fetch_room_layout(room_id: int, refresh_from_server: bool = false) -> void:
 	_pending_action = "fetch"
 	request(endpoint, headers, HTTPClient.METHOD_POST, json_body)
 
+func fetch_odf_detail(odf_id: String) -> void:
+	odf_id = odf_id.strip_edges()
+	if odf_id == "":
+		push_warning("odf_id 为空，跳过 ODF 详情请求")
+		return
+	var endpoint := "%s/getODF" % [odf_base_url]
+	var headers := ["Content-Type: application/json"]
+	var payload := {
+		"odfId": odf_id
+	}
+	var json_body := JSON.stringify(payload)
+	_pending_action = "fetch_odf"
+	_pending_odf_id = odf_id
+	var request_error := request(endpoint, headers, HTTPClient.METHOD_POST, json_body)
+	if request_error != OK:
+		var err_msg := "ODF 详情请求启动失败: %s" % error_string(request_error)
+		push_error(err_msg)
+		emit_signal("odf_detail_failed", odf_id, err_msg, request_error)
+		emit_signal("request_failed", err_msg, request_error)
+		_pending_action = ""
+		_pending_odf_id = ""
+
+func save_odf_detail(odf_id: String, odf_json: String) -> void:
+	odf_id = odf_id.strip_edges()
+	odf_json = odf_json.strip_edges()
+	if odf_id == "":
+		push_warning("odf_id 为空，跳过 ODF 详情保存")
+		return
+	if odf_json == "":
+		push_warning("ODF JSON 为空，跳过 ODF 详情保存")
+		return
+	var endpoint := "%s/saveOrUpdate" % [odf_base_url]
+	var headers := ["Content-Type: application/json"]
+	var payload := {
+		"odfId": odf_id,
+		"json": odf_json
+	}
+	var json_body := JSON.stringify(payload)
+	_pending_action = "save_odf"
+	_pending_odf_id = odf_id
+	var request_error := request(endpoint, headers, HTTPClient.METHOD_POST, json_body)
+	if request_error != OK:
+		var err_msg := "ODF 详情保存请求启动失败: %s" % error_string(request_error)
+		push_error(err_msg)
+		emit_signal("odf_save_failed", odf_id, err_msg, request_error)
+		emit_signal("request_failed", err_msg, request_error)
+		_pending_action = ""
+		_pending_odf_id = ""
+
 func _on_request_completed(result, response_code, _headers, body):
 	print("HTTP 请求完成，结果:", result, " 响应码:", response_code)
 	if result != RESULT_SUCCESS or response_code != 200:
 		var err_msg := "请求失败: %d" % response_code
 		push_error(err_msg)
+		if _pending_action == "fetch_odf":
+			emit_signal("odf_detail_failed", _pending_odf_id, err_msg, response_code)
+		elif _pending_action == "save_odf":
+			emit_signal("odf_save_failed", _pending_odf_id, err_msg, response_code)
 		emit_signal("request_failed", err_msg, response_code)
+		_pending_action = ""
+		_pending_odf_id = ""
 		return
 
+	var response_text: String = body.get_string_from_utf8()
 	var json := JSON.new()
-	var err = json.parse(body.get_string_from_utf8())
+	var err = json.parse(response_text)
 	print("HTTP 响应 JSON 解析结果:", err)
 	if err != OK:
+		var raw_text: String = response_text.strip_edges()
+		if _pending_action == "save_odf":
+			emit_signal("odf_save_completed", _pending_odf_id, raw_text)
+			_pending_action = ""
+			_pending_odf_id = ""
+			return
 		push_error("JSON解析失败")
+		if _pending_action == "fetch_odf":
+			emit_signal("odf_detail_failed", _pending_odf_id, "JSON解析失败", response_code)
+		elif _pending_action == "save_odf":
+			emit_signal("odf_save_failed", _pending_odf_id, "JSON解析失败", response_code)
 		emit_signal("request_failed", "JSON解析失败", response_code)
+		_pending_action = ""
+		_pending_odf_id = ""
 		return
 
 	var parsed = json.data
 	print("后端返回对象:\n", JSON.stringify(parsed, "  "))
 	if _pending_action == "save":
 		emit_signal("save_completed", parsed)
+	elif _pending_action == "fetch_odf":
+		emit_signal("odf_detail_received", _pending_odf_id, parsed)
+	elif _pending_action == "save_odf":
+		emit_signal("odf_save_completed", _pending_odf_id, parsed)
 	else:
 		var app_state = _get_app_state()
 		var layout_json := _extract_layout_json(parsed)
@@ -85,6 +163,7 @@ func _on_request_completed(result, response_code, _headers, body):
 		else:
 			print("机房", current_station_id, "暂无可加载布局")
 	_pending_action = ""
+	_pending_odf_id = ""
 
 func save_layout_data(layout_data_string: String, station: int) -> void:
 	if station <= 0:

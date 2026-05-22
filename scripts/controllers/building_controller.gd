@@ -34,7 +34,10 @@ func set_building_mode(scene: PackedScene, preview: MeshInstance3D, operation_pa
 		if operation_panel:
 			operation_panel.visible = false
 		if module_panel:
-			module_panel.visible = false
+			if module_panel.has_method("close_for_current_target"):
+				module_panel.call("close_for_current_target")
+			else:
+				module_panel.visible = false
 		print("进入建造模式: ", scene.resource_path)
 	update_ui()
 
