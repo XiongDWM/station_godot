@@ -15,7 +15,12 @@ const DASH_GAP := 8.0
 const CONNECTOR_COLOR := Color(0.95, 0.97, 1.0, 0.9)
 const DRAG_ROTATION_SPEED := 0.35
 const MAX_PITCH_DEGREES := 45.0
-const PREVIEW_PANEL_SIZE := Vector2(272.0, 336.0)
+const PREVIEW_PANEL_SIZE := Vector2(272.0, 292.0)
+const PREVIEW_PANEL_MIN_HEIGHT := 220.0
+const PREVIEW_PANEL_BOTTOM_MARGIN := 28.0
+const PREVIEW_VIEWPORT_DEFAULT_HEIGHT := 148.0
+const PREVIEW_VIEWPORT_MIN_HEIGHT := 92.0
+const PREVIEW_VIEWPORT_CHROME_HEIGHT := 166.0
 const PREVIEW_PANEL_GAP := 16.0
 const PREVIEW_PANEL_TOP := 18.0
 const PREVIEW_BACKGROUND_COLOR := Color(0.58072674, 0.66129375, 0.87493426, 1.0)
@@ -52,6 +57,7 @@ func _ready() -> void:
 	clip_contents = false
 	visible = false
 	set_process(false)
+	set_process_input(false)
 
 func _process(_delta: float) -> void:
 	if not visible or not preview_panel or not preview_panel.visible:
@@ -63,6 +69,8 @@ func _process(_delta: float) -> void:
 	queue_redraw()
 
 func _input(event: InputEvent) -> void:
+	if not visible or not preview_panel or not preview_panel.visible:
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed and _is_point_in_preview_viewport(event.position):
 			is_drag_rotating = true
@@ -92,7 +100,7 @@ func should_block_main_scene_input(event: InputEvent) -> bool:
 	return false
 
 func _is_point_in_preview_viewport(point: Vector2) -> bool:
-	return preview_viewport_container and preview_viewport_container.get_global_rect().has_point(point)
+	return visible and preview_panel and preview_panel.visible and preview_viewport_container and preview_viewport_container.get_global_rect().has_point(point)
 
 func show_for_target(target: Node3D) -> void:
 	if not target:
@@ -102,6 +110,7 @@ func show_for_target(target: Node3D) -> void:
 		_build_ui()
 		_update_panel_layout()
 		preview_panel.visible = false
+		_set_preview_input_enabled(false)
 		is_ui_built = true
 	current_target = target
 	current_target_size = _find_box_size(target)
@@ -116,9 +125,11 @@ func show_for_target(target: Node3D) -> void:
 	_update_panel_layout()
 	preview_panel.visible = true
 	visible = true
+	_set_preview_input_enabled(true)
 	if preview_viewport:
 		preview_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	set_process(true)
+	set_process_input(true)
 	queue_redraw()
 
 func hide_preview() -> void:
@@ -126,10 +137,12 @@ func hide_preview() -> void:
 	is_drag_rotating = false
 	if preview_panel:
 		preview_panel.visible = false
+	_set_preview_input_enabled(false)
 	if preview_viewport:
 		preview_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	visible = false
 	set_process(false)
+	set_process_input(false)
 	queue_redraw()
 
 func _build_ui() -> void:
@@ -189,7 +202,7 @@ func _build_ui() -> void:
 	root_vbox.add_child(preview_viewport_row)
 
 	preview_viewport_container = SubViewportContainer.new()
-	preview_viewport_container.custom_minimum_size = Vector2(0, 208)
+	preview_viewport_container.custom_minimum_size = Vector2(0, PREVIEW_VIEWPORT_DEFAULT_HEIGHT)
 	preview_viewport_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	preview_viewport_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	preview_viewport_container.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -201,7 +214,7 @@ func _build_ui() -> void:
 	preview_pan_y_slider.max_value = PAN_SCROLL_LIMIT
 	preview_pan_y_slider.step = 0.01
 	preview_pan_y_slider.value = 0.0
-	preview_pan_y_slider.custom_minimum_size = Vector2(18, 208)
+	preview_pan_y_slider.custom_minimum_size = Vector2(18, PREVIEW_VIEWPORT_DEFAULT_HEIGHT)
 	preview_pan_y_slider.mouse_filter = Control.MOUSE_FILTER_STOP
 	preview_pan_y_slider.value_changed.connect(_on_pan_y_changed)
 	preview_viewport_row.add_child(preview_pan_y_slider)
@@ -526,15 +539,42 @@ func _get_world_camera() -> Camera3D:
 func _update_panel_layout() -> void:
 	if not preview_panel:
 		return
+	_apply_responsive_preview_size()
 	var scene_root := get_tree().current_scene
 	if not scene_root:
 		return
+	var viewport_size := get_viewport_rect().size
 	var left_panel := scene_root.get_node_or_null("CanvasLayer/Panel") as Control
 	if left_panel:
 		var panel_rect: Rect2 = left_panel.get_global_rect()
 		preview_panel.global_position = Vector2(panel_rect.position.x + panel_rect.size.x + PREVIEW_PANEL_GAP, PREVIEW_PANEL_TOP)
 	else:
 		preview_panel.position = Vector2(96.0, PREVIEW_PANEL_TOP)
+	preview_panel.global_position.y = clampf(preview_panel.global_position.y, 0.0, maxf(0.0, viewport_size.y - preview_panel.size.y - PREVIEW_PANEL_BOTTOM_MARGIN))
+
+func _apply_responsive_preview_size() -> void:
+	var viewport_size := get_viewport_rect().size
+	var available_height := maxf(PREVIEW_PANEL_MIN_HEIGHT, viewport_size.y - PREVIEW_PANEL_TOP - PREVIEW_PANEL_BOTTOM_MARGIN)
+	var panel_height := minf(PREVIEW_PANEL_SIZE.y, available_height)
+	var viewport_height := maxf(PREVIEW_VIEWPORT_MIN_HEIGHT, panel_height - PREVIEW_VIEWPORT_CHROME_HEIGHT)
+	var panel_size := Vector2(PREVIEW_PANEL_SIZE.x, panel_height)
+	preview_panel.custom_minimum_size = panel_size
+	preview_panel.size = panel_size
+	if preview_viewport_container:
+		preview_viewport_container.custom_minimum_size = Vector2(0.0, viewport_height)
+	if preview_pan_y_slider:
+		preview_pan_y_slider.custom_minimum_size = Vector2(18.0, viewport_height)
+
+func _set_preview_input_enabled(enabled: bool) -> void:
+	var filter := Control.MOUSE_FILTER_STOP if enabled else Control.MOUSE_FILTER_IGNORE
+	if preview_panel:
+		preview_panel.mouse_filter = filter
+	if preview_viewport_container:
+		preview_viewport_container.mouse_filter = filter
+	if preview_pan_x_slider:
+		preview_pan_x_slider.mouse_filter = filter
+	if preview_pan_y_slider:
+		preview_pan_y_slider.mouse_filter = filter
 
 func _get_bound_module_panel() -> Control:
 	var scene_root := get_tree().current_scene
