@@ -15,12 +15,12 @@ const DASH_GAP := 8.0
 const CONNECTOR_COLOR := Color(0.95, 0.97, 1.0, 0.9)
 const DRAG_ROTATION_SPEED := 0.35
 const MAX_PITCH_DEGREES := 45.0
-const PREVIEW_PANEL_SIZE := Vector2(272.0, 292.0)
-const PREVIEW_PANEL_MIN_HEIGHT := 220.0
-const PREVIEW_PANEL_BOTTOM_MARGIN := 28.0
-const PREVIEW_VIEWPORT_DEFAULT_HEIGHT := 148.0
-const PREVIEW_VIEWPORT_MIN_HEIGHT := 92.0
-const PREVIEW_VIEWPORT_CHROME_HEIGHT := 166.0
+const PREVIEW_PANEL_SIZE := Vector2(272.0, 272.0)
+const PREVIEW_PANEL_MIN_HEIGHT := 176.0
+const PREVIEW_PANEL_BOTTOM_MARGIN := 36.0
+const PREVIEW_VIEWPORT_DEFAULT_HEIGHT := 128.0
+const PREVIEW_VIEWPORT_MIN_HEIGHT := 72.0
+const PREVIEW_VIEWPORT_CHROME_HEIGHT := 152.0
 const PREVIEW_PANEL_GAP := 16.0
 const PREVIEW_PANEL_TOP := 18.0
 const PREVIEW_BACKGROUND_COLOR := Color(0.58072674, 0.66129375, 0.87493426, 1.0)
@@ -554,9 +554,17 @@ func _update_panel_layout() -> void:
 
 func _apply_responsive_preview_size() -> void:
 	var viewport_size := get_viewport_rect().size
-	var available_height := maxf(PREVIEW_PANEL_MIN_HEIGHT, viewport_size.y - PREVIEW_PANEL_TOP - PREVIEW_PANEL_BOTTOM_MARGIN)
+	var available_height := maxf(0.0, viewport_size.y - PREVIEW_PANEL_TOP - PREVIEW_PANEL_BOTTOM_MARGIN)
 	var panel_height := minf(PREVIEW_PANEL_SIZE.y, available_height)
-	var viewport_height := maxf(PREVIEW_VIEWPORT_MIN_HEIGHT, panel_height - PREVIEW_VIEWPORT_CHROME_HEIGHT)
+	if panel_height <= 0.0:
+		panel_height = PREVIEW_PANEL_SIZE.y
+	elif available_height >= PREVIEW_PANEL_MIN_HEIGHT:
+		panel_height = maxf(PREVIEW_PANEL_MIN_HEIGHT, panel_height)
+	var viewport_height := panel_height - PREVIEW_VIEWPORT_CHROME_HEIGHT
+	if available_height >= PREVIEW_PANEL_MIN_HEIGHT:
+		viewport_height = maxf(PREVIEW_VIEWPORT_MIN_HEIGHT, viewport_height)
+	else:
+		viewport_height = maxf(56.0, viewport_height)
 	var panel_size := Vector2(PREVIEW_PANEL_SIZE.x, panel_height)
 	preview_panel.custom_minimum_size = panel_size
 	preview_panel.size = panel_size

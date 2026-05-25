@@ -429,6 +429,13 @@ tooltip_text = "地板"
 icon = ExtResource("6_floor_button_icon")
 expand_icon = true
 
+[node name="btn_ac" type="Button" parent="CanvasLayer/BuildPanel" unique_id=1071660490]
+layout_mode = 0
+offset_left = 50.088814
+offset_top = 2.566776
+offset_right = 58.088814
+offset_bottom = 10.566776
+
 [node name="ControllPanel" type="Control" parent="CanvasLayer" unique_id=956763815]
 layout_mode = 3
 anchors_preset = 0

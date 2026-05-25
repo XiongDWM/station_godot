@@ -3,6 +3,7 @@ extends Panel
 const SLOT_GROUP_SCRIPT := preload("res://scripts/controllers/module_slot_group.gd")
 const RJ45_PORT_BUTTON_SCRIPT := preload("res://scripts/style/rj45_port_button.gd")
 const OPTICAL_PORT_BUTTON_SCRIPT := preload("res://scripts/style/optical_port_button.gd")
+const PORT_CABLE_MOCK_DATA := preload("res://scripts/state/port_cable_mock_data.gd")
 const LOCK_CLOSED_ICON := preload("res://assets/icons/lock_closed.svg")
 const LOCK_OPEN_ICON := preload("res://assets/icons/lock_open.svg")
 const CARD_ACTION_ADD_ICON := preload("res://assets/icons/card_action_add.svg")
@@ -37,6 +38,11 @@ const CARD_MENU_PORT_12 := 12
 const CARD_MENU_SWITCH := 24
 const CARD_TYPE_NORMAL := "normal"
 const CARD_TYPE_SWITCH := "switch"
+const PORT_STATUS_EMPTY := 0
+const PORT_STATUS_NORMAL := 1
+const PORT_STATUS_HIGH_LOSS := 2
+const PORT_STATUS_BROKEN_CORE := 3
+const PORT_STATUS_FREE_CORE := 4
 
 const CARD_PORT_SIZE := 26
 const CARD_PORT_GAP := 5
@@ -66,12 +72,19 @@ const CARD_METAL_BORDER_COLOR := Color(0.9, 0.92, 0.92, 1.0)
 const CARD_ACTION_BG_COLOR := Color(1, 1, 1, 0.96)
 const CARD_ACTION_BORDER_COLOR := Color(0.77, 0.79, 0.82, 1.0)
 const CARD_PLACEHOLDER_PORT_COLOR := Color(1, 1, 1, 0)
+const PORT_CONTEXT_TEXT_COLOR := Color(0.97, 0.985, 1.0, 1.0)
+const PORT_CONTEXT_MUTED_TEXT_COLOR := Color(0.86, 0.9, 0.94, 0.96)
+const PORT_CONTEXT_SEPARATOR_COLOR := Color(1.0, 1.0, 1.0, 0.18)
 const PORT_SOCKET_BG_COLOR := Color(0.015, 0.018, 0.02, 1.0)
 const PORT_SOCKET_HOVER_BG_COLOR := Color(0.045, 0.055, 0.06, 1.0)
 const PORT_SOCKET_PRESSED_BG_COLOR := Color(0.0, 0.01, 0.014, 1.0)
 const PORT_SOCKET_BORDER_COLOR := Color(0.82, 0.86, 0.86, 0.95)
 const PORT_SOCKET_ACTIVE_BORDER_COLOR := Color(0.9, 0.16, 0.12, 1.0)
 const PORT_SOCKET_SHADOW_COLOR := Color(0.0, 0.0, 0.0, 0.45)
+const PREVIEW_LEGEND_BG_COLOR := Color(0.05, 0.06, 0.072, 0.94)
+const PREVIEW_LEGEND_BORDER_COLOR := Color(0.86, 0.89, 0.92, 0.34)
+const PREVIEW_LEGEND_TEXT_COLOR := Color(0.95, 0.97, 0.99, 0.98)
+const PREVIEW_LEGEND_MUTED_TEXT_COLOR := Color(0.83, 0.87, 0.91, 0.92)
 
 @onready var row_input: SpinBox = $MarginContainer/RootVBox/ConfigPanel/ConfigVbox/InputRow/RowGroup/RowInput
 @onready var col_input: SpinBox = $MarginContainer/RootVBox/ConfigPanel/ConfigVbox/InputRow/ColGroup/ColInput
@@ -97,15 +110,30 @@ var cabinet_configs: Dictionary = {}
 var is_loading_target_config := false
 var card_context_menu: PopupMenu
 var pending_card_context: Dictionary = {}
+var port_context_popup: PopupPanel
+var pending_port_context: Dictionary = {}
+var port_fiber_type_input: OptionButton
+var port_fiber_core_input: SpinBox
+var port_status_group: ButtonGroup
+var port_status_buttons: Dictionary = {}
+var bad_port_check: CheckButton
+var set_empty_port_button: Button
+var is_syncing_port_context_ui := false
 var api_request: HTTPRequest
 var preview_overlay: Control
 var pending_remote_cabinet_id := ""
 var odf_type_input: OptionButton
+var port_tooltip_theme: Theme
+var port_context_radio_unchecked_icon: Texture2D
+var port_context_radio_checked_icon: Texture2D
+var port_context_check_unchecked_icon: Texture2D
+var port_context_check_checked_icon: Texture2D
 
 func _ready() -> void:
 	_setup_odf_type_input()
 	_setup_option_inputs()
 	_setup_card_context_menu()
+	_setup_port_context_popup()
 	if row_input:
 		row_input.value_changed.connect(_on_dimensions_changed)
 	if col_input:
@@ -182,6 +210,237 @@ func _setup_card_context_menu() -> void:
 	card_context_menu.add_item("清空端口", CARD_MENU_CLEAR)
 	card_context_menu.id_pressed.connect(_on_card_context_menu_selected)
 	add_child(card_context_menu)
+
+func _setup_port_context_popup() -> void:
+	port_context_popup = PopupPanel.new()
+	port_context_popup.name = "PortContextPopup"
+	port_context_popup.visible = false
+	port_context_popup.add_theme_stylebox_override("panel", _create_port_context_popup_stylebox())
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_top", 12)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_bottom", 12)
+	port_context_popup.add_child(margin)
+
+	var root := VBoxContainer.new()
+	root.custom_minimum_size = Vector2(220, 0)
+	root.add_theme_constant_override("separation", 8)
+	margin.add_child(root)
+
+	var fiber_title := Label.new()
+	fiber_title.text = "光缆"
+	_style_port_context_label(fiber_title, true)
+	root.add_child(fiber_title)
+
+	port_fiber_type_input = OptionButton.new()
+	port_fiber_type_input.custom_minimum_size = Vector2(0, 32)
+	_style_port_context_option_button(port_fiber_type_input)
+	port_fiber_type_input.item_selected.connect(_on_port_fiber_type_selected)
+	root.add_child(port_fiber_type_input)
+	_populate_port_cable_options("")
+
+	var fiber_core_row := HBoxContainer.new()
+	fiber_core_row.add_theme_constant_override("separation", 10)
+	root.add_child(fiber_core_row)
+
+	var fiber_core_title := Label.new()
+	fiber_core_title.text = "纤芯序号"
+	_style_port_context_label(fiber_core_title, false)
+	fiber_core_row.add_child(fiber_core_title)
+
+	port_fiber_core_input = SpinBox.new()
+	port_fiber_core_input.custom_minimum_size = Vector2(96, 32)
+	port_fiber_core_input.step = 1.0
+	port_fiber_core_input.rounded = true
+	port_fiber_core_input.allow_greater = false
+	port_fiber_core_input.allow_lesser = false
+	port_fiber_core_input.editable = false
+	port_fiber_core_input.value = 0
+	port_fiber_core_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_port_context_spinbox(port_fiber_core_input)
+	port_fiber_core_input.value_changed.connect(_on_port_fiber_core_changed)
+	fiber_core_row.add_child(port_fiber_core_input)
+	_refresh_port_fiber_core_input("", 0)
+
+	var top_separator := HSeparator.new()
+	_style_port_context_separator(top_separator)
+	root.add_child(top_separator)
+
+	var status_title := Label.new()
+	status_title.text = "占用："
+	_style_port_context_label(status_title, true)
+	root.add_child(status_title)
+
+	port_status_group = ButtonGroup.new()
+	for item in [
+		{"id": PORT_STATUS_FREE_CORE, "label": "空闲芯"},
+		{"id": PORT_STATUS_NORMAL, "label": "正常"},
+		{"id": PORT_STATUS_HIGH_LOSS, "label": "高衰耗"},
+		{"id": PORT_STATUS_BROKEN_CORE, "label": "坏芯"},
+	]:
+		var status_button := CheckBox.new()
+		status_button.text = str(item["label"])
+		status_button.button_group = port_status_group
+		status_button.set_meta("port_status", int(item["id"]))
+		_style_port_context_button(status_button)
+		_apply_port_context_radio_theme(status_button)
+		status_button.pressed.connect(_on_port_status_button_pressed.bind(int(item["id"])))
+		port_status_buttons[int(item["id"])] = status_button
+		root.add_child(status_button)
+
+	var bottom_separator := HSeparator.new()
+	_style_port_context_separator(bottom_separator)
+	root.add_child(bottom_separator)
+
+	bad_port_check = CheckButton.new()
+	bad_port_check.text = "标记坏端口"
+	_style_port_context_button(bad_port_check)
+	_apply_port_context_check_theme(bad_port_check)
+	bad_port_check.toggled.connect(_on_bad_port_toggled)
+	root.add_child(bad_port_check)
+
+	set_empty_port_button = Button.new()
+	set_empty_port_button.text = "设置空闲端口"
+	set_empty_port_button.focus_mode = Control.FOCUS_NONE
+	_style_port_context_button(set_empty_port_button)
+	set_empty_port_button.pressed.connect(_on_set_empty_port_pressed)
+	root.add_child(set_empty_port_button)
+
+	add_child(port_context_popup)
+
+func _create_port_context_popup_stylebox() -> StyleBoxFlat:
+	var style_box := StyleBoxFlat.new()
+	style_box.bg_color = Color(0.055, 0.065, 0.078, 0.985)
+	style_box.border_color = Color(0.92, 0.95, 0.96, 0.96)
+	style_box.set_border_width_all(1)
+	style_box.corner_radius_top_left = 8
+	style_box.corner_radius_top_right = 8
+	style_box.corner_radius_bottom_left = 8
+	style_box.corner_radius_bottom_right = 8
+	style_box.shadow_color = Color(0.0, 0.0, 0.0, 0.42)
+	style_box.shadow_size = 10
+	style_box.shadow_offset = Vector2(0, 3)
+	return style_box
+
+func _style_port_context_label(label: Label, is_section_title: bool) -> void:
+	label.add_theme_color_override("font_color", PORT_CONTEXT_TEXT_COLOR if is_section_title else PORT_CONTEXT_MUTED_TEXT_COLOR)
+	label.add_theme_font_size_override("font_size", 15 if is_section_title else 13)
+
+func _style_port_context_button(button: BaseButton) -> void:
+	button.add_theme_color_override("font_color", PORT_CONTEXT_TEXT_COLOR)
+	button.add_theme_color_override("font_hover_color", PORT_CONTEXT_TEXT_COLOR)
+	button.add_theme_color_override("font_pressed_color", PORT_CONTEXT_TEXT_COLOR)
+	button.add_theme_color_override("font_hover_pressed_color", PORT_CONTEXT_TEXT_COLOR)
+	button.add_theme_color_override("font_focus_color", PORT_CONTEXT_TEXT_COLOR)
+	button.add_theme_color_override("font_disabled_color", Color(PORT_CONTEXT_TEXT_COLOR, 0.45))
+	button.add_theme_font_size_override("font_size", 14)
+	button.add_theme_constant_override("h_separation", 10)
+
+func _get_port_tooltip_theme() -> Theme:
+	if port_tooltip_theme:
+		return port_tooltip_theme
+	port_tooltip_theme = Theme.new()
+	var tooltip_panel := StyleBoxFlat.new()
+	tooltip_panel.bg_color = Color(0.055, 0.065, 0.078, 0.985)
+	tooltip_panel.border_color = Color(0.94, 0.96, 0.98, 0.98)
+	tooltip_panel.set_border_width_all(1)
+	tooltip_panel.corner_radius_top_left = 6
+	tooltip_panel.corner_radius_top_right = 6
+	tooltip_panel.corner_radius_bottom_left = 6
+	tooltip_panel.corner_radius_bottom_right = 6
+	tooltip_panel.shadow_color = Color(0.0, 0.0, 0.0, 0.48)
+	tooltip_panel.shadow_size = 8
+	tooltip_panel.shadow_offset = Vector2(0, 2)
+	tooltip_panel.content_margin_left = 10
+	tooltip_panel.content_margin_top = 8
+	tooltip_panel.content_margin_right = 10
+	tooltip_panel.content_margin_bottom = 8
+	port_tooltip_theme.set_stylebox("panel", "TooltipPanel", tooltip_panel)
+	port_tooltip_theme.set_color("font_color", "TooltipLabel", Color(0.98, 0.99, 1.0, 1.0))
+	port_tooltip_theme.set_font_size("font_size", "TooltipLabel", 14)
+	return port_tooltip_theme
+
+func _apply_port_tooltip_theme(control: Control) -> void:
+	if control:
+		control.theme = _get_port_tooltip_theme()
+
+func _get_port_context_indicator_icon(is_checked: bool, is_radio: bool) -> Texture2D:
+	var image := Image.create(18, 18, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+	var border_color := Color(0.9, 0.93, 0.96, 0.98) if is_checked else Color(0.72, 0.76, 0.8, 0.96)
+	var fill_color := Color(0.92, 0.95, 0.98, 0.16) if is_radio else Color(0.92, 0.95, 0.98, 0.1)
+	var mark_color := Color(0.98, 0.99, 1.0, 1.0)
+	if is_radio:
+		var center := Vector2(8.5, 8.5)
+		for y in range(18):
+			for x in range(18):
+				var distance := center.distance_to(Vector2(x, y))
+				if distance <= 7.2 and distance >= 5.6:
+					image.set_pixel(x, y, border_color)
+				elif distance < 5.6:
+					image.set_pixel(x, y, fill_color)
+				if is_checked and distance < 2.8:
+					image.set_pixel(x, y, mark_color)
+	else:
+		for y in range(2, 16):
+			for x in range(2, 16):
+				var is_border := x <= 3 or x >= 14 or y <= 3 or y >= 14
+				image.set_pixel(x, y, border_color if is_border else fill_color)
+		if is_checked:
+			var check_pixels := [
+				Vector2i(5, 9), Vector2i(6, 10), Vector2i(7, 11),
+				Vector2i(8, 10), Vector2i(9, 9), Vector2i(10, 8),
+				Vector2i(11, 7), Vector2i(12, 6),
+			]
+			for point in check_pixels:
+				image.set_pixel(point.x, point.y, mark_color)
+				if point.y + 1 < 18:
+					image.set_pixel(point.x, point.y + 1, mark_color)
+	return ImageTexture.create_from_image(image)
+
+func _ensure_port_context_indicator_icons() -> void:
+	if not port_context_radio_unchecked_icon:
+		port_context_radio_unchecked_icon = _get_port_context_indicator_icon(false, true)
+	if not port_context_radio_checked_icon:
+		port_context_radio_checked_icon = _get_port_context_indicator_icon(true, true)
+	if not port_context_check_unchecked_icon:
+		port_context_check_unchecked_icon = _get_port_context_indicator_icon(false, false)
+	if not port_context_check_checked_icon:
+		port_context_check_checked_icon = _get_port_context_indicator_icon(true, false)
+
+func _apply_port_context_radio_theme(button: CheckBox) -> void:
+	_ensure_port_context_indicator_icons()
+	button.add_theme_icon_override("radio_unchecked", port_context_radio_unchecked_icon)
+	button.add_theme_icon_override("radio_checked", port_context_radio_checked_icon)
+	button.add_theme_icon_override("radio_unchecked_disabled", port_context_radio_unchecked_icon)
+	button.add_theme_icon_override("radio_checked_disabled", port_context_radio_checked_icon)
+
+func _apply_port_context_check_theme(button: CheckButton) -> void:
+	_ensure_port_context_indicator_icons()
+	button.add_theme_icon_override("unchecked", port_context_check_unchecked_icon)
+	button.add_theme_icon_override("checked", port_context_check_checked_icon)
+	button.add_theme_icon_override("unchecked_disabled", port_context_check_unchecked_icon)
+	button.add_theme_icon_override("checked_disabled", port_context_check_checked_icon)
+
+func _style_port_context_option_button(option_button: OptionButton) -> void:
+	option_button.add_theme_color_override("font_color", PORT_CONTEXT_TEXT_COLOR)
+	option_button.add_theme_color_override("font_hover_color", PORT_CONTEXT_TEXT_COLOR)
+	option_button.add_theme_color_override("font_pressed_color", PORT_CONTEXT_TEXT_COLOR)
+	option_button.add_theme_color_override("font_focus_color", PORT_CONTEXT_TEXT_COLOR)
+	option_button.add_theme_color_override("font_disabled_color", Color(PORT_CONTEXT_TEXT_COLOR, 0.45))
+	option_button.add_theme_font_size_override("font_size", 14)
+
+func _style_port_context_spinbox(spin_box: SpinBox) -> void:
+	spin_box.add_theme_color_override("font_color", PORT_CONTEXT_TEXT_COLOR)
+	spin_box.add_theme_color_override("font_hover_color", PORT_CONTEXT_TEXT_COLOR)
+	spin_box.add_theme_color_override("font_focus_color", PORT_CONTEXT_TEXT_COLOR)
+	spin_box.add_theme_color_override("font_disabled_color", Color(PORT_CONTEXT_TEXT_COLOR, 0.45))
+	spin_box.add_theme_font_size_override("font_size", 14)
+
+func _style_port_context_separator(separator: HSeparator) -> void:
+	separator.modulate = PORT_CONTEXT_SEPARATOR_COLOR
 
 func _on_dimensions_changed(_value: float) -> void:
 	if is_loading_target_config:
@@ -394,7 +653,7 @@ func _build_card_state(port_count: int, ports: Array, card_type: String = CARD_T
 	return {
 		"card_type": card_type,
 		"port_count": port_count,
-		"ports": ports.duplicate(),
+		"ports": _resize_port_state(ports, port_count),
 	}
 
 func _create_slot_locks(slot_count: int) -> Array:
@@ -417,14 +676,124 @@ func _render_current_face() -> void:
 	if face_slot_cards.is_empty():
 		return
 
+	var content_column := VBoxContainer.new()
+	content_column.add_theme_constant_override("separation", 10)
+	content_column.alignment = BoxContainer.ALIGNMENT_BEGIN
+	content_column.size_flags_horizontal = Control.SIZE_FILL
+	content_column.size_flags_vertical = Control.SIZE_FILL
+	port_grid.add_child(content_column)
+
+	content_column.add_child(_create_preview_legend())
+
 	var slot_root: VBoxContainer = VBoxContainer.new()
 	slot_root.add_theme_constant_override("separation", SLOT_GAP)
 	slot_root.size_flags_horizontal = Control.SIZE_FILL
-	port_grid.add_child(slot_root)
-	port_grid.custom_minimum_size = _get_preview_minimum_size(_get_slot_count(), _get_slot_spec())
+	content_column.add_child(slot_root)
+	var preview_minimum := _get_preview_minimum_size(_get_slot_count(), _get_slot_spec())
+	preview_minimum.y += 54.0
+	port_grid.custom_minimum_size = preview_minimum
 
 	for slot_index in range(_get_slot_count()):
 		slot_root.add_child(_create_slot_group(current_face_index, slot_index, _get_slot_spec()))
+
+func _create_preview_legend() -> Control:
+	var legend_panel := PanelContainer.new()
+	legend_panel.size_flags_horizontal = Control.SIZE_FILL
+	legend_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	legend_panel.add_theme_stylebox_override("panel", _create_preview_legend_stylebox())
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 10)
+	margin.add_theme_constant_override("margin_top", 10)
+	margin.add_theme_constant_override("margin_right", 10)
+	margin.add_theme_constant_override("margin_bottom", 10)
+	legend_panel.add_child(margin)
+
+	var content := HBoxContainer.new()
+	content.add_theme_constant_override("separation", 16)
+	content.alignment = BoxContainer.ALIGNMENT_BEGIN
+	content.size_flags_horizontal = Control.SIZE_FILL
+	margin.add_child(content)
+
+	var title := Label.new()
+	title.text = ""
+	title.add_theme_color_override("font_color", PREVIEW_LEGEND_TEXT_COLOR)
+	title.add_theme_font_size_override("font_size", 14)
+	content.add_child(title)
+
+	var items_row := HBoxContainer.new()
+	items_row.add_theme_constant_override("separation", 12)
+	items_row.size_flags_horizontal = Control.SIZE_FILL
+	content.add_child(items_row)
+
+	var items := [
+		{"label": "空闲口", "color": Color(0.10, 0.12, 0.14, 0.18), "border": Color(0.78, 0.82, 0.86, 0.7), "mark": ""},
+		{"label": "空闲芯", "color": Color(0.24, 0.57, 0.92, 0.72), "border": Color(0.73, 0.85, 0.98, 0.95), "mark": ""},
+		{"label": "正常", "color": Color(0.16, 0.72, 0.29, 0.72), "border": Color(0.73, 0.95, 0.79, 0.95), "mark": ""},
+		{"label": "高衰耗", "color": Color(0.94, 0.76, 0.18, 0.76), "border": Color(0.99, 0.9, 0.59, 0.98), "mark": ""},
+		{"label": "坏芯", "color": Color(0.9, 0.16, 0.12, 0.74), "border": Color(0.98, 0.75, 0.72, 0.98), "mark": ""},
+		{"label": "坏端口", "color": Color(0.9, 0.16, 0.12, 0.86), "border": Color(0.99, 0.84, 0.81, 1.0), "mark": "×"},
+	]
+	for item in items:
+		items_row.add_child(_create_preview_legend_item(str(item["label"]), item["color"], item["border"], str(item["mark"])))
+
+	return legend_panel
+
+func _create_preview_legend_stylebox() -> StyleBoxFlat:
+	var style_box := StyleBoxFlat.new()
+	style_box.bg_color = PREVIEW_LEGEND_BG_COLOR
+	style_box.border_color = PREVIEW_LEGEND_BORDER_COLOR
+	style_box.set_border_width_all(1)
+	style_box.corner_radius_top_left = 8
+	style_box.corner_radius_top_right = 8
+	style_box.corner_radius_bottom_left = 8
+	style_box.corner_radius_bottom_right = 8
+	style_box.shadow_color = Color(0.0, 0.0, 0.0, 0.18)
+	style_box.shadow_size = 4
+	style_box.shadow_offset = Vector2(1, 2)
+	return style_box
+
+func _create_preview_legend_item(label_text: String, fill_color: Color, border_color: Color, mark_text: String = "") -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+
+	var swatch_holder := CenterContainer.new()
+	swatch_holder.custom_minimum_size = Vector2(22, 18)
+	row.add_child(swatch_holder)
+
+	var swatch := PanelContainer.new()
+	swatch.custom_minimum_size = Vector2(18, 14)
+	swatch.add_theme_stylebox_override("panel", _create_preview_legend_swatch_stylebox(fill_color, border_color))
+	swatch_holder.add_child(swatch)
+
+	if mark_text != "":
+		var mark := Label.new()
+		mark.text = mark_text
+		mark.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		mark.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		mark.add_theme_color_override("font_color", Color(0.99, 0.99, 1.0, 0.98))
+		mark.add_theme_font_size_override("font_size", 14)
+		mark.size_flags_horizontal = Control.SIZE_FILL
+		mark.size_flags_vertical = Control.SIZE_FILL
+		swatch.add_child(mark)
+
+	var label := Label.new()
+	label.text = label_text
+	label.add_theme_color_override("font_color", PREVIEW_LEGEND_MUTED_TEXT_COLOR)
+	label.add_theme_font_size_override("font_size", 13)
+	row.add_child(label)
+	return row
+
+func _create_preview_legend_swatch_stylebox(fill_color: Color, border_color: Color) -> StyleBoxFlat:
+	var style_box := StyleBoxFlat.new()
+	style_box.bg_color = fill_color
+	style_box.border_color = border_color
+	style_box.set_border_width_all(1)
+	style_box.corner_radius_top_left = 3
+	style_box.corner_radius_top_right = 3
+	style_box.corner_radius_bottom_left = 3
+	style_box.corner_radius_bottom_right = 3
+	return style_box
 
 func _clear_port_grid_now() -> void:
 	if not port_grid:
@@ -695,35 +1064,37 @@ func _create_card_port_button(face_index: int, slot_index: int, card_index: int,
 	var port_button: Button = RJ45_PORT_BUTTON_SCRIPT.new() if use_rj45_style else OPTICAL_PORT_BUTTON_SCRIPT.new() if is_active_port else Button.new()
 	port_button.custom_minimum_size = Vector2(CARD_PORT_SIZE, CARD_PORT_SIZE)
 	port_button.flat = false
-	port_button.toggle_mode = is_active_port
+	port_button.toggle_mode = false
 	port_button.focus_mode = Control.FOCUS_NONE
 	port_button.disabled = not is_active_port
 	port_button.mouse_filter = Control.MOUSE_FILTER_STOP if is_active_port else Control.MOUSE_FILTER_IGNORE
-	port_button.button_pressed = is_active_port and _get_card_port_state(face_index, slot_index, card_index, port_index)
+	_apply_port_tooltip_theme(port_button)
+	var port_state := _get_card_port_state(face_index, slot_index, card_index, port_index)
+	port_button.button_pressed = is_active_port and _should_port_button_appear_pressed(port_state)
 	_update_port_button(port_button, face_index, slot_index, card_index, port_index)
 	if is_active_port:
-		port_button.toggled.connect(_on_card_port_toggled.bind(face_index, slot_index, card_index, port_index, port_button))
+		port_button.pressed.connect(_on_card_port_pressed.bind(face_index, slot_index, card_index, port_index, port_button))
+		port_button.gui_input.connect(_on_port_button_gui_input.bind(face_index, slot_index, card_index, port_index, port_button))
 	return port_button
 
 func _create_switch_port_button(face_index: int, slot_index: int, card_index: int, port_index: int) -> Button:
 	var port_button: Button = RJ45_PORT_BUTTON_SCRIPT.new()
 	port_button.custom_minimum_size = Vector2(SWITCH_PORT_WIDTH, SWITCH_PORT_HEIGHT)
 	port_button.flat = false
-	port_button.toggle_mode = true
+	port_button.toggle_mode = false
 	port_button.focus_mode = Control.FOCUS_NONE
-	port_button.button_pressed = _get_card_port_state(face_index, slot_index, card_index, port_index)
+	_apply_port_tooltip_theme(port_button)
+	var port_state := _get_card_port_state(face_index, slot_index, card_index, port_index)
+	port_button.button_pressed = _should_port_button_appear_pressed(port_state)
 	_update_switch_port_button(port_button, face_index, slot_index, card_index, port_index)
-	port_button.toggled.connect(_on_card_port_toggled.bind(face_index, slot_index, card_index, port_index, port_button))
+	port_button.pressed.connect(_on_card_port_pressed.bind(face_index, slot_index, card_index, port_index, port_button))
+	port_button.gui_input.connect(_on_port_button_gui_input.bind(face_index, slot_index, card_index, port_index, port_button))
 	return port_button
 
-func _on_card_port_toggled(pressed: bool, face_index: int, slot_index: int, card_index: int, port_index: int, port_button: Button) -> void:
-	var card_state: Dictionary = _get_card_state(face_index, slot_index, card_index)
-	var ports: Array = card_state.get("ports", [])
-	if port_index >= ports.size():
-		return
-	ports[port_index] = pressed
-	card_state["ports"] = ports
-	face_slot_cards[face_index][slot_index][card_index] = card_state
+func _on_card_port_pressed(face_index: int, slot_index: int, card_index: int, port_index: int, port_button: Button) -> void:
+	var current_state := _get_card_port_state(face_index, slot_index, card_index, port_index)
+	var next_state := _get_next_cycle_port_state(current_state)
+	_set_port_state(face_index, slot_index, card_index, port_index, next_state["status"], next_state["is_bad"])
 	if _is_switch_card(face_index, slot_index, card_index):
 		_update_switch_port_button(port_button, face_index, slot_index, card_index, port_index)
 	else:
@@ -732,11 +1103,11 @@ func _on_card_port_toggled(pressed: bool, face_index: int, slot_index: int, card
 	_store_current_target_config()
 
 func _update_switch_port_button(port_button: Button, face_index: int, slot_index: int, card_index: int, port_index: int) -> void:
-	var is_occupied: bool = port_button.button_pressed
-	var port_color: Color = Color(0.9, 0.16, 0.12, 1.0) if is_occupied else Color(0.18, 0.2, 0.2, 1.0)
+	var port_state := _get_card_port_state(face_index, slot_index, card_index, port_index)
+	var port_color: Color = _get_port_status_color(port_state)
 	port_button.text = ""
 	if port_button.has_method("set_port_visual"):
-		port_button.call("set_port_visual", port_index < SWITCH_PORT_COLUMNS, is_occupied)
+		port_button.call("set_port_visual", port_index < SWITCH_PORT_COLUMNS, int(port_state.get("status", PORT_STATUS_EMPTY)), _variant_to_bool(port_state.get("is_bad", false)))
 	port_button.add_theme_stylebox_override("normal", _create_port_stylebox(false, false))
 	port_button.add_theme_stylebox_override("hover", _create_port_stylebox(false, false))
 	port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(false, false))
@@ -746,11 +1117,12 @@ func _update_switch_port_button(port_button: Button, face_index: int, slot_index
 	port_button.add_theme_color_override("font_hover_color", port_color)
 	port_button.add_theme_color_override("font_hover_pressed_color", port_color)
 	port_button.add_theme_color_override("font_pressed_color", port_color)
-	port_button.tooltip_text = "%s | Face %d, 插槽 %d, 交换机子卡 %d, 端口 %d" % ["已占用" if is_occupied else "空闲", face_index + 1, slot_index + 1, card_index + 1, port_index + 1]
+	port_button.button_pressed = _should_port_button_appear_pressed(port_state)
+	port_button.tooltip_text = _build_port_tooltip(face_index, slot_index, card_index, port_index, port_state, true)
 
 func _update_port_button(port_button: Button, face_index: int, slot_index: int, card_index: int, port_index: int) -> void:
 	var is_active_port: bool = port_index < _get_card_port_count(face_index, slot_index, card_index)
-	var is_occupied: bool = port_button.button_pressed
+	var port_state := _get_card_port_state(face_index, slot_index, card_index, port_index)
 	var port_color: Color = CARD_PLACEHOLDER_PORT_COLOR
 	if not is_active_port:
 		port_button.text = ""
@@ -765,13 +1137,13 @@ func _update_port_button(port_button: Button, face_index: int, slot_index: int, 
 		port_button.add_theme_color_override("font_hover_color", port_color)
 		port_button.add_theme_color_override("font_hover_pressed_color", port_color)
 		port_button.add_theme_color_override("font_pressed_color", port_color)
-		port_button.tooltip_text = "占位 | Face %d, 插槽 %d, 子卡 %d, 端口 %d" % [face_index + 1, slot_index + 1, card_index + 1, port_index + 1]
+		port_button.tooltip_text = "占位\n%s" % _get_port_location_label(face_index, slot_index, card_index, port_index, false)
 		return
 	if is_active_port:
-		port_color = Color(0.9, 0.16, 0.12, 1.0) if is_occupied else Color(0.16, 0.72, 0.29, 1.0)
+		port_color = _get_port_status_color(port_state)
 	if port_button.has_method("set_optical_visual"):
 		port_button.text = ""
-		port_button.call("set_optical_visual", _get_port_shape(), is_occupied)
+		port_button.call("set_optical_visual", _get_port_shape(), int(port_state.get("status", PORT_STATUS_EMPTY)), _variant_to_bool(port_state.get("is_bad", false)))
 		port_button.add_theme_stylebox_override("normal", _create_port_stylebox(false, false))
 		port_button.add_theme_stylebox_override("hover", _create_port_stylebox(false, false))
 		port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(false, false))
@@ -779,7 +1151,7 @@ func _update_port_button(port_button: Button, face_index: int, slot_index: int, 
 		port_button.add_theme_stylebox_override("disabled", _create_port_stylebox(false, false))
 	elif port_button.has_method("set_port_visual"):
 		port_button.text = ""
-		port_button.call("set_port_visual", true, is_occupied)
+		port_button.call("set_port_visual", true, int(port_state.get("status", PORT_STATUS_EMPTY)), _variant_to_bool(port_state.get("is_bad", false)))
 		port_button.add_theme_stylebox_override("normal", _create_port_stylebox(false, false))
 		port_button.add_theme_stylebox_override("hover", _create_port_stylebox(false, false))
 		port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(false, false))
@@ -788,18 +1160,20 @@ func _update_port_button(port_button: Button, face_index: int, slot_index: int, 
 	else:
 		port_button.text = "▣" if _get_port_shape() == PORT_SHAPE_SQUARE else "◉"
 		port_button.add_theme_font_size_override("font_size", 22)
-		port_button.add_theme_stylebox_override("normal", _create_port_stylebox(is_active_port, false, false, is_occupied))
-		port_button.add_theme_stylebox_override("hover", _create_port_stylebox(is_active_port, false, true, is_occupied))
-		port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(is_active_port, true, false, is_occupied))
-		port_button.add_theme_stylebox_override("hover_pressed", _create_port_stylebox(is_active_port, true, true, is_occupied))
-		port_button.add_theme_stylebox_override("disabled", _create_port_stylebox(is_active_port, false, false, is_occupied))
+		var is_emphasized := _should_port_button_appear_pressed(port_state)
+		port_button.add_theme_stylebox_override("normal", _create_port_stylebox(is_active_port, false, false, is_emphasized))
+		port_button.add_theme_stylebox_override("hover", _create_port_stylebox(is_active_port, false, true, is_emphasized))
+		port_button.add_theme_stylebox_override("pressed", _create_port_stylebox(is_active_port, true, false, is_emphasized))
+		port_button.add_theme_stylebox_override("hover_pressed", _create_port_stylebox(is_active_port, true, true, is_emphasized))
+		port_button.add_theme_stylebox_override("disabled", _create_port_stylebox(is_active_port, false, false, is_emphasized))
 	port_button.add_theme_color_override("font_color", port_color)
 	port_button.add_theme_color_override("font_disabled_color", port_color)
 	port_button.add_theme_color_override("font_focus_color", port_color)
 	port_button.add_theme_color_override("font_hover_color", port_color)
 	port_button.add_theme_color_override("font_hover_pressed_color", port_color)
 	port_button.add_theme_color_override("font_pressed_color", port_color)
-	port_button.tooltip_text = "%s | Face %d, 插槽 %d, 子卡 %d, 端口 %d" % ["占位" if not is_active_port else "已占用" if is_occupied else "空闲", face_index + 1, slot_index + 1, card_index + 1, port_index + 1]
+	port_button.button_pressed = _should_port_button_appear_pressed(port_state)
+	port_button.tooltip_text = _build_port_tooltip(face_index, slot_index, card_index, port_index, port_state, false)
 
 func _create_port_stylebox(is_active_port: bool, is_pressed: bool, is_hover: bool = false, is_occupied: bool = false) -> StyleBoxFlat:
 	var style_box := StyleBoxFlat.new()
@@ -892,8 +1266,53 @@ func _resize_port_state(existing_ports: Variant, port_count: int) -> Array:
 	var resized_ports: Array = []
 	resized_ports.resize(port_count)
 	for port_index in range(port_count):
-		resized_ports[port_index] = existing_ports is Array and port_index < existing_ports.size() and bool(existing_ports[port_index])
+		var raw_port: Variant = null
+		if existing_ports is Array and port_index < existing_ports.size():
+			raw_port = existing_ports[port_index]
+		resized_ports[port_index] = _normalize_port_state(raw_port)
 	return resized_ports
+
+func _variant_to_bool(value: Variant) -> bool:
+	match typeof(value):
+		TYPE_BOOL:
+			return value
+		TYPE_INT:
+			return int(value) != 0
+		TYPE_FLOAT:
+			return not is_zero_approx(float(value))
+		TYPE_STRING:
+			var normalized := str(value).strip_edges().to_lower()
+			return normalized == "true" or normalized == "1" or normalized == "yes"
+		TYPE_NIL:
+			return false
+		_:
+			return true
+
+func _build_default_port_state() -> Dictionary:
+	return {
+		"status": PORT_STATUS_EMPTY,
+		"is_bad": false,
+		"cable_id": "",
+		"fiber_core_index": 0,
+	}
+
+func _normalize_port_state(raw_port: Variant) -> Dictionary:
+	var normalized := _build_default_port_state()
+	if raw_port is Dictionary:
+		var port_status := int(raw_port.get("status", PORT_STATUS_EMPTY))
+		if port_status != PORT_STATUS_NORMAL and port_status != PORT_STATUS_HIGH_LOSS and port_status != PORT_STATUS_BROKEN_CORE and port_status != PORT_STATUS_FREE_CORE:
+			port_status = PORT_STATUS_EMPTY
+		normalized["status"] = port_status
+		normalized["is_bad"] = _variant_to_bool(raw_port.get("is_bad", raw_port.get("bad_port", false)))
+		normalized["cable_id"] = str(raw_port.get("cable_id", raw_port.get("fiber_cable_id", raw_port.get("cable", ""))))
+		normalized["fiber_core_index"] = max(0, int(raw_port.get("fiber_core_index", raw_port.get("core_index", raw_port.get("fiber_no", 0)))))
+	elif _variant_to_bool(raw_port):
+		normalized["status"] = PORT_STATUS_BROKEN_CORE
+	if _variant_to_bool(normalized.get("is_bad", false)):
+		normalized["status"] = PORT_STATUS_EMPTY
+	if str(normalized.get("cable_id", "")).strip_edges() == "":
+		normalized["fiber_core_index"] = 0
+	return normalized
 
 func _get_card_state(face_index: int, slot_index: int, card_index: int) -> Dictionary:
 	if face_index >= face_slot_cards.size():
@@ -910,9 +1329,259 @@ func _get_card_port_count(face_index: int, slot_index: int, card_index: int) -> 
 func _is_switch_card(face_index: int, slot_index: int, card_index: int) -> bool:
 	return str(_get_card_state(face_index, slot_index, card_index).get("card_type", CARD_TYPE_NORMAL)) == CARD_TYPE_SWITCH
 
-func _get_card_port_state(face_index: int, slot_index: int, card_index: int, port_index: int) -> bool:
+func _get_card_port_state(face_index: int, slot_index: int, card_index: int, port_index: int) -> Dictionary:
 	var ports: Array = _get_card_state(face_index, slot_index, card_index).get("ports", [])
-	return port_index < ports.size() and bool(ports[port_index])
+	if port_index >= ports.size():
+		return _build_default_port_state()
+	return _normalize_port_state(ports[port_index])
+
+func _set_port_state(face_index: int, slot_index: int, card_index: int, port_index: int, status: int, is_bad: bool) -> void:
+	var card_state: Dictionary = _get_card_state(face_index, slot_index, card_index)
+	var ports: Array = _resize_port_state(card_state.get("ports", []), int(card_state.get("port_count", 0)))
+	if port_index >= ports.size():
+		return
+	var current_port_state := _normalize_port_state(ports[port_index])
+	ports[port_index] = {
+		"status": PORT_STATUS_EMPTY if is_bad else status,
+		"is_bad": is_bad,
+		"cable_id": str(current_port_state.get("cable_id", "")),
+		"fiber_core_index": int(current_port_state.get("fiber_core_index", 0)),
+	}
+	card_state["ports"] = ports
+	face_slot_cards[face_index][slot_index][card_index] = card_state
+
+func _set_port_cable_selection(face_index: int, slot_index: int, card_index: int, port_index: int, cable_id: String, fiber_core_index: int) -> void:
+	var card_state: Dictionary = _get_card_state(face_index, slot_index, card_index)
+	var ports: Array = _resize_port_state(card_state.get("ports", []), int(card_state.get("port_count", 0)))
+	if port_index >= ports.size():
+		return
+	var current_port_state := _normalize_port_state(ports[port_index])
+	ports[port_index] = {
+		"status": int(current_port_state.get("status", PORT_STATUS_EMPTY)),
+		"is_bad": _variant_to_bool(current_port_state.get("is_bad", false)),
+		"cable_id": cable_id,
+		"fiber_core_index": fiber_core_index if cable_id != "" else 0,
+	}
+	card_state["ports"] = ports
+	face_slot_cards[face_index][slot_index][card_index] = card_state
+
+func _get_mock_port_cables() -> Array:
+	return PORT_CABLE_MOCK_DATA.get_cables() if PORT_CABLE_MOCK_DATA else []
+
+func _find_mock_port_cable(cable_id: String) -> Dictionary:
+	for cable in _get_mock_port_cables():
+		if cable is Dictionary and str(cable.get("id", "")) == cable_id:
+			return cable
+	return {}
+
+func _populate_port_cable_options(selected_cable_id: String) -> void:
+	if not port_fiber_type_input:
+		return
+	port_fiber_type_input.clear()
+	port_fiber_type_input.add_item("请选择光缆", -1)
+	port_fiber_type_input.set_item_metadata(0, "")
+	var selected_index := 0
+	for cable in _get_mock_port_cables():
+		if not cable is Dictionary:
+			continue
+		var item_index := port_fiber_type_input.item_count
+		var cable_id := str(cable.get("id", ""))
+		var cable_name := str(cable.get("name", cable_id))
+		var core_count := int(cable.get("core_count", 0))
+		port_fiber_type_input.add_item("%s (%d芯)" % [cable_name, core_count], item_index)
+		port_fiber_type_input.set_item_metadata(item_index, cable_id)
+		if cable_id == selected_cable_id:
+			selected_index = item_index
+	port_fiber_type_input.select(selected_index)
+
+func _get_selected_port_cable_id() -> String:
+	if not port_fiber_type_input:
+		return ""
+	var selected_index := port_fiber_type_input.selected
+	if selected_index < 0 or selected_index >= port_fiber_type_input.item_count:
+		return ""
+	return str(port_fiber_type_input.get_item_metadata(selected_index))
+
+func _refresh_port_fiber_core_input(cable_id: String, selected_core_index: int) -> void:
+	if not port_fiber_core_input:
+		return
+	var cable := _find_mock_port_cable(cable_id)
+	if cable.is_empty():
+		port_fiber_core_input.editable = false
+		port_fiber_core_input.min_value = 0
+		port_fiber_core_input.max_value = 0
+		port_fiber_core_input.value = 0
+		port_fiber_core_input.tooltip_text = "请先选择光缆"
+		return
+	var core_count := maxf(1, int(cable.get("core_count", 1)))
+	port_fiber_core_input.editable = true
+	port_fiber_core_input.min_value = 1
+	port_fiber_core_input.max_value = core_count
+	port_fiber_core_input.value = clampi(selected_core_index if selected_core_index > 0 else 1, 1, core_count)
+	port_fiber_core_input.tooltip_text = "可输入 1 到 %d 的纤芯序号" % core_count
+
+func _get_next_cycle_port_state(port_state: Dictionary) -> Dictionary:
+	if _variant_to_bool(port_state.get("is_bad", false)):
+		return {
+			"status": PORT_STATUS_EMPTY,
+			"is_bad": false,
+		}
+	match int(port_state.get("status", PORT_STATUS_EMPTY)):
+		PORT_STATUS_EMPTY:
+			return {"status": PORT_STATUS_FREE_CORE, "is_bad": false}
+		PORT_STATUS_FREE_CORE:
+			return {"status": PORT_STATUS_NORMAL, "is_bad": false}
+		PORT_STATUS_NORMAL:
+			return {"status": PORT_STATUS_HIGH_LOSS, "is_bad": false}
+		PORT_STATUS_HIGH_LOSS:
+			return {"status": PORT_STATUS_BROKEN_CORE, "is_bad": false}
+		_:
+			return {"status": PORT_STATUS_EMPTY, "is_bad": false}
+
+func _should_port_button_appear_pressed(port_state: Dictionary) -> bool:
+	return _variant_to_bool(port_state.get("is_bad", false)) or int(port_state.get("status", PORT_STATUS_EMPTY)) != PORT_STATUS_EMPTY
+
+func _get_port_status_label(port_state: Dictionary) -> String:
+	if _variant_to_bool(port_state.get("is_bad", false)):
+		return "坏端口"
+	match int(port_state.get("status", PORT_STATUS_EMPTY)):
+		PORT_STATUS_FREE_CORE:
+			return "空闲芯"
+		PORT_STATUS_NORMAL:
+			return "正常"
+		PORT_STATUS_HIGH_LOSS:
+			return "高衰耗"
+		PORT_STATUS_BROKEN_CORE:
+			return "坏芯"
+		_:
+			return "空闲口"
+
+func _get_port_cable_label(port_state: Dictionary) -> String:
+	var cable_id := str(port_state.get("cable_id", "")).strip_edges()
+	if cable_id == "":
+		return "未选择光缆"
+	var cable_info := _find_mock_port_cable(cable_id)
+	var cable_name := str(cable_info.get("name", cable_id)).strip_edges()
+	var fiber_core_index := maxi(0, int(port_state.get("fiber_core_index", 0)))
+	if fiber_core_index <= 0:
+		return "%s，未选纤芯" % cable_name
+	return "%s，第%d芯" % [cable_name, fiber_core_index]
+
+func _get_port_location_label(face_index: int, slot_index: int, card_index: int, port_index: int, is_switch_card: bool) -> String:
+	return "Face %d，插槽 %d，%s %d，端口 %d" % [
+		face_index + 1,
+		slot_index + 1,
+		"交换机子卡" if is_switch_card else "子卡",
+		card_index + 1,
+		port_index + 1,
+	]
+
+func _build_port_tooltip(face_index: int, slot_index: int, card_index: int, port_index: int, port_state: Dictionary, is_switch_card: bool) -> String:
+	return "%s\n%s\n%s" % [
+		_get_port_cable_label(port_state),
+		_get_port_status_label(port_state),
+		_get_port_location_label(face_index, slot_index, card_index, port_index, is_switch_card),
+	]
+
+func _get_port_status_color(port_state: Dictionary) -> Color:
+	if _variant_to_bool(port_state.get("is_bad", false)):
+		return Color(0.9, 0.16, 0.12, 1.0)
+	match int(port_state.get("status", PORT_STATUS_EMPTY)):
+		PORT_STATUS_FREE_CORE:
+			return Color(0.24, 0.57, 0.92, 1.0)
+		PORT_STATUS_NORMAL:
+			return Color(0.16, 0.72, 0.29, 1.0)
+		PORT_STATUS_HIGH_LOSS:
+			return Color(0.94, 0.76, 0.18, 1.0)
+		PORT_STATUS_BROKEN_CORE:
+			return Color(0.9, 0.16, 0.12, 1.0)
+		_:
+			return Color(0.72, 0.76, 0.78, 1.0)
+
+func _on_port_button_gui_input(event: InputEvent, face_index: int, slot_index: int, card_index: int, port_index: int, port_button: Control) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+		_show_port_context_menu(face_index, slot_index, card_index, port_index, port_button.get_screen_position() + event.position)
+		port_button.accept_event()
+
+func _show_port_context_menu(face_index: int, slot_index: int, card_index: int, port_index: int, popup_position: Vector2) -> void:
+	pending_port_context = {
+		"face_index": face_index,
+		"slot_index": slot_index,
+		"card_index": card_index,
+		"port_index": port_index,
+	}
+	var port_state := _get_card_port_state(face_index, slot_index, card_index, port_index)
+	is_syncing_port_context_ui = true
+	_populate_port_cable_options(str(port_state.get("cable_id", "")))
+	_refresh_port_fiber_core_input(str(port_state.get("cable_id", "")), int(port_state.get("fiber_core_index", 0)))
+	for status_id in port_status_buttons.keys():
+		var status_button := port_status_buttons[status_id] as BaseButton
+		if status_button:
+			status_button.set_pressed_no_signal(int(port_state.get("status", PORT_STATUS_EMPTY)) == int(status_id) and not _variant_to_bool(port_state.get("is_bad", false)))
+	if bad_port_check:
+		bad_port_check.set_pressed_no_signal(_variant_to_bool(port_state.get("is_bad", false)))
+	is_syncing_port_context_ui = false
+	port_context_popup.position = Vector2i(popup_position)
+	port_context_popup.reset_size()
+	port_context_popup.popup()
+
+func _on_port_fiber_type_selected(_index: int) -> void:
+	if is_syncing_port_context_ui or pending_port_context.is_empty():
+		return
+	var cable_id := _get_selected_port_cable_id()
+	var current_core_index := int(port_fiber_core_input.value) if port_fiber_core_input else 0
+	is_syncing_port_context_ui = true
+	_refresh_port_fiber_core_input(cable_id, current_core_index)
+	is_syncing_port_context_ui = false
+	_commit_pending_port_cable_selection()
+
+func _on_port_fiber_core_changed(value: float) -> void:
+	if is_syncing_port_context_ui or pending_port_context.is_empty():
+		return
+	if not port_fiber_core_input or not port_fiber_core_input.editable:
+		return
+	_commit_pending_port_cable_selection(int(round(value)))
+
+func _commit_pending_port_cable_selection(explicit_core_index: int = -1) -> void:
+	if pending_port_context.is_empty():
+		return
+	var face_index := int(pending_port_context.get("face_index", current_face_index))
+	var slot_index := int(pending_port_context.get("slot_index", 0))
+	var card_index := int(pending_port_context.get("card_index", 0))
+	var port_index := int(pending_port_context.get("port_index", 0))
+	var cable_id := _get_selected_port_cable_id()
+	var core_index := 0
+	if cable_id != "" and port_fiber_core_input and port_fiber_core_input.editable:
+		core_index = explicit_core_index if explicit_core_index > 0 else int(round(port_fiber_core_input.value))
+	_set_port_cable_selection(face_index, slot_index, card_index, port_index, cable_id, core_index)
+	_store_current_target_config()
+
+func _on_port_status_button_pressed(status: int) -> void:
+	if is_syncing_port_context_ui or pending_port_context.is_empty():
+		return
+	_apply_port_context_selection(status, false)
+
+func _on_bad_port_toggled(pressed: bool) -> void:
+	if is_syncing_port_context_ui or pending_port_context.is_empty():
+		return
+	_apply_port_context_selection(PORT_STATUS_EMPTY, pressed)
+
+func _on_set_empty_port_pressed() -> void:
+	if pending_port_context.is_empty():
+		return
+	_apply_port_context_selection(PORT_STATUS_EMPTY, false)
+
+func _apply_port_context_selection(status: int, is_bad: bool) -> void:
+	var face_index := int(pending_port_context.get("face_index", current_face_index))
+	var slot_index := int(pending_port_context.get("slot_index", 0))
+	var card_index := int(pending_port_context.get("card_index", 0))
+	var port_index := int(pending_port_context.get("port_index", 0))
+	_set_port_state(face_index, slot_index, card_index, port_index, status, is_bad)
+	pending_port_context.clear()
+	if port_context_popup:
+		port_context_popup.hide()
+	_refresh_port_view()
+	_store_current_target_config()
 
 func _refresh_summary() -> void:
 	var slot_count: int = _get_slot_count()
@@ -931,8 +1600,8 @@ func _refresh_summary() -> void:
 				if port_count > 0:
 					configured_cards += 1
 					total_ports += port_count
-					for occupied in card_state.get("ports", []):
-						if bool(occupied):
+					for port_state in card_state.get("ports", []):
+						if _should_port_button_appear_pressed(_normalize_port_state(port_state)):
 							occupied_ports += 1
 
 	if summary_label:
@@ -950,12 +1619,12 @@ func build_card_drag_payload(face_index: int, slot_index: int, card_index: int, 
 	}
 
 func is_card_locked(face_index: int, slot_index: int, card_index: int) -> bool:
-	return face_index < face_card_locks.size() and slot_index < face_card_locks[face_index].size() and card_index < face_card_locks[face_index][slot_index].size() and bool(face_card_locks[face_index][slot_index][card_index])
+	return face_index < face_card_locks.size() and slot_index < face_card_locks[face_index].size() and card_index < face_card_locks[face_index][slot_index].size() and _variant_to_bool(face_card_locks[face_index][slot_index][card_index])
 
 func _toggle_card_locked(face_index: int, slot_index: int, card_index: int) -> void:
 	if face_index >= face_card_locks.size() or slot_index >= face_card_locks[face_index].size() or card_index >= face_card_locks[face_index][slot_index].size():
 		return
-	face_card_locks[face_index][slot_index][card_index] = not bool(face_card_locks[face_index][slot_index][card_index])
+	face_card_locks[face_index][slot_index][card_index] = not _variant_to_bool(face_card_locks[face_index][slot_index][card_index])
 
 func can_drop_card_payload(data: Variant, face_index: int, slot_index: int, slot_layout: int) -> bool:
 	return data is Dictionary and data.get("type", "") == "module_card" and data.get("face_index", -1) == face_index and data.get("slot_index", -1) == slot_index and data.get("slot_layout", -1) == slot_layout
@@ -977,7 +1646,7 @@ func _move_card_group(face_index: int, slot_index: int, source_card_index: int, 
 	if source_card_index == insert_index:
 		return
 	var moved_card: Dictionary = face_slot_cards[face_index][slot_index][source_card_index]
-	var moved_lock: bool = bool(face_card_locks[face_index][slot_index][source_card_index])
+	var moved_lock: bool = _variant_to_bool(face_card_locks[face_index][slot_index][source_card_index])
 	face_slot_cards[face_index][slot_index].remove_at(source_card_index)
 	face_card_locks[face_index][slot_index].remove_at(source_card_index)
 	face_slot_cards[face_index][slot_index].insert(insert_index, moved_card)
@@ -1211,7 +1880,7 @@ func _sanitize_card_locks(raw_locks: Variant, slot_count: int, slot_spec: int, t
 			var sanitized_cards: Array = []
 			sanitized_cards.resize(slot_spec)
 			for card_index in range(slot_spec):
-				sanitized_cards[card_index] = not (card_index < source_slot.size() and not bool(source_slot[card_index]))
+				sanitized_cards[card_index] = not (card_index < source_slot.size() and not _variant_to_bool(source_slot[card_index]))
 			sanitized_slots.append(sanitized_cards)
 		sanitized_faces.append(sanitized_slots)
 	return sanitized_faces
