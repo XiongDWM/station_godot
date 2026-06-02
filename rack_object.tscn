@@ -1,0 +1,17 @@
+[gd_scene format=3 uid="uid://djo8isc15d80v"]
+
+[ext_resource type="Script" uid="uid://bwbstj72xyt50" path="res://scripts/controllers/odf_cabinet_controller.gd" id="1_odf_controller"]
+[ext_resource type="PackedScene" uid="uid://l5r041awmbdb" path="res://assets/models/new_rack/racks_without_door.glb" id="2_0uthi"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_rack_collision"]
+size = Vector3(0.6, 1.8, 1)
+
+[node name="RackObject" type="StaticBody3D" unique_id=1761603802]
+script = ExtResource("1_odf_controller")
+default_odf_type = 1
+enable_open_animation = false
+
+[node name="odf_colision" type="CollisionShape3D" parent="." unique_id=1217713886]
+shape = SubResource("BoxShape3D_rack_collision")
+
+[node name="object_odf" parent="." unique_id=1051542727 instance=ExtResource("2_0uthi")]

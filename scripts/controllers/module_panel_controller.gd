@@ -16,6 +16,7 @@ const SLOT_LAYOUT_HORIZONTAL := 0
 const SLOT_LAYOUT_VERTICAL := 1
 const ODF_TYPE_CABINET := 0
 const ODF_TYPE_RACK := 1
+const FIXED_ODF_TYPE_META_KEY := "fixed_odf_type"
 
 # 机柜配置默认值
 const DEFAULT_SLOT_COUNT := 2
@@ -128,6 +129,7 @@ var port_context_radio_unchecked_icon: Texture2D
 var port_context_radio_checked_icon: Texture2D
 var port_context_check_unchecked_icon: Texture2D
 var port_context_check_checked_icon: Texture2D
+var current_target_fixed_odf_type := -1
 
 func _ready() -> void:
 	_setup_odf_type_input()
@@ -476,7 +478,7 @@ func _setup_odf_type_input() -> void:
 	type_group.add_child(odf_type_input)
 
 func _on_odf_type_selected(_index: int) -> void:
-	if is_loading_target_config:
+	if is_loading_target_config or current_target_fixed_odf_type >= 0:
 		return
 	_apply_odf_type_defaults(_get_odf_type())
 	_refresh_preview_overlay()
@@ -1658,6 +1660,7 @@ func open_for_target(target: Node3D) -> void:
 	if current_target and current_target != target:
 		_store_current_target_config()
 	current_target = target
+	current_target_fixed_odf_type = _get_target_fixed_odf_type(target)
 	_load_target_config(target)
 	if preview_overlay and preview_overlay.has_method("show_for_target"):
 		preview_overlay.call("show_for_target", target)
@@ -1672,7 +1675,10 @@ func _load_target_config(target: Node3D) -> void:
 		if target_config is Dictionary:
 			stored_config = target_config.duplicate(true)
 	if stored_config.is_empty():
-		stored_config = _build_default_config()
+		stored_config = _build_default_config(current_target_fixed_odf_type if current_target_fixed_odf_type >= 0 else DEFAULT_ODF_TYPE)
+	if current_target_fixed_odf_type >= 0:
+		stored_config["odf_type"] = current_target_fixed_odf_type
+		stored_config["type"] = current_target_fixed_odf_type
 		cabinet_configs[cabinet_id] = stored_config.duplicate(true)
 		target.set_meta("module_config", stored_config.duplicate(true))
 	_apply_target_config(stored_config)
@@ -1682,8 +1688,12 @@ func _apply_target_config(stored_config: Dictionary) -> void:
 		return
 
 	is_loading_target_config = true
+	var effective_odf_type := int(stored_config.get("odf_type", stored_config.get("type", DEFAULT_ODF_TYPE)))
+	if current_target_fixed_odf_type >= 0:
+		effective_odf_type = current_target_fixed_odf_type
 	if odf_type_input:
-		_select_option_id(odf_type_input, int(stored_config.get("odf_type", stored_config.get("type", DEFAULT_ODF_TYPE))))
+		_select_option_id(odf_type_input, effective_odf_type)
+		odf_type_input.disabled = current_target_fixed_odf_type >= 0
 	var odf_type := _get_odf_type()
 	row_input.value = int(stored_config.get("slot_count", stored_config.get("rows", _get_default_slot_count_for_type(odf_type))))
 	col_input.value = int(stored_config.get("slot_spec", stored_config.get("cols", _get_default_slot_spec_for_type(odf_type))))
@@ -1698,6 +1708,11 @@ func _apply_target_config(stored_config: Dictionary) -> void:
 	current_face_index = clamp(int(stored_config.get("current_face_index", 0)), 0, max(0, _get_total_faces() - 1))
 	is_loading_target_config = false
 	_refresh_port_view()
+
+func _get_target_fixed_odf_type(target: Node3D) -> int:
+	if not target or not target.has_meta(FIXED_ODF_TYPE_META_KEY):
+		return -1
+	return int(target.get_meta(FIXED_ODF_TYPE_META_KEY))
 
 func _request_remote_target_config(target: Node3D) -> void:
 	var cabinet_id := _ensure_target_id(target)

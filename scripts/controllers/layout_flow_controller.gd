@@ -13,7 +13,7 @@ func setup(target_root: Node3D, request_node: HTTPRequest, serializer) -> void:
 	layout_serializer = serializer
 
 func bind_save_button(btn_save: Button) -> void:
-	if btn_save:
+	if btn_save and not btn_save.pressed.is_connected(save_layoutdata):
 		btn_save.pressed.connect(save_layoutdata)
 
 func bind_api_signals() -> void:
@@ -131,6 +131,8 @@ func _try_load_cached_layout() -> void:
 func load_layoutdata(json_string: String) -> void:
 	if layout_serializer and root and _has_valid_layout_data(json_string):
 		layout_serializer.deserialize_json_to_scene(json_string, root)
+		if root.has_method("refresh_build_view_state"):
+			root.call("refresh_build_view_state")
 
 func _has_valid_layout_data(data) -> bool:
 	match typeof(data):

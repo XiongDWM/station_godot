@@ -1,7 +1,8 @@
 extends Control
 
 const CABINET_PREVIEW_SCENE := preload("res://assets/models/cabinet/JIAOHUANJI.glb")
-const RACK_PREVIEW_SCENE := preload("res://assets/models/rack/rack.glb")
+const RACK_PREVIEW_SCENE := preload("res://assets/models/new_rack/racks_without_door.glb")
+const FIXED_ODF_TYPE_META_KEY := "fixed_odf_type"
 const DEFAULT_BOX_SIZE := Vector3(1.0, 2.0, 0.5)
 const MIN_TARGET_SIZE := Vector3(0.45, 0.9, 0.3)
 const ROTATION_STEP_DEGREES := 90.0
@@ -152,6 +153,7 @@ func _build_ui() -> void:
 	preview_panel.custom_minimum_size = PREVIEW_PANEL_SIZE
 	preview_panel.size = PREVIEW_PANEL_SIZE
 	preview_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	preview_panel.clip_contents = true
 	add_child(preview_panel)
 
 	var margin := MarginContainer.new()
@@ -360,9 +362,9 @@ func _update_preview_mesh() -> void:
 
 	preview_camera.fov = 34.0
 	preview_camera_base_position = Vector3(
-		max_edge * 1.15 + 0.45,
-		display_size.y * 0.58 + max_edge * 0.32,
-		max_edge * 1.65 + 0.65
+		max_edge * 0.88 + 0.28,
+		display_size.y * 0.52 + max_edge * 0.22,
+		max_edge * 1.28 + 0.38
 	)
 	preview_camera_target = Vector3(0.0, display_size.y * 0.46, 0.0)
 	preview_camera_pan_edge = max_edge
@@ -446,6 +448,8 @@ func _apply_preview_material() -> void:
 	material.roughness = 0.32
 
 func _get_current_odf_type() -> int:
+	if current_target and current_target.has_meta(FIXED_ODF_TYPE_META_KEY):
+		return _normalize_odf_type(current_target.get_meta(FIXED_ODF_TYPE_META_KEY))
 	if current_target and current_target.has_meta("module_config"):
 		var config: Variant = current_target.get_meta("module_config")
 		if config is Dictionary:
@@ -539,32 +543,38 @@ func _get_world_camera() -> Camera3D:
 func _update_panel_layout() -> void:
 	if not preview_panel:
 		return
-	_apply_responsive_preview_size()
+	var viewport_size := get_viewport_rect().size
+	var panel_size := _apply_responsive_preview_size(viewport_size)
 	var scene_root := get_tree().current_scene
 	if not scene_root:
 		return
-	var viewport_size := get_viewport_rect().size
 	var left_panel := scene_root.get_node_or_null("CanvasLayer/Panel") as Control
 	if left_panel:
 		var panel_rect: Rect2 = left_panel.get_global_rect()
 		preview_panel.global_position = Vector2(panel_rect.position.x + panel_rect.size.x + PREVIEW_PANEL_GAP, PREVIEW_PANEL_TOP)
 	else:
 		preview_panel.position = Vector2(96.0, PREVIEW_PANEL_TOP)
-	preview_panel.global_position.y = clampf(preview_panel.global_position.y, 0.0, maxf(0.0, viewport_size.y - preview_panel.size.y - PREVIEW_PANEL_BOTTOM_MARGIN))
+	preview_panel.global_position.y = clampf(
+		preview_panel.global_position.y,
+		PREVIEW_PANEL_TOP,
+		maxf(PREVIEW_PANEL_TOP, viewport_size.y - panel_size.y - PREVIEW_PANEL_BOTTOM_MARGIN)
+	)
 
-func _apply_responsive_preview_size() -> void:
-	var viewport_size := get_viewport_rect().size
+func _apply_responsive_preview_size(viewport_size: Vector2 = Vector2.ZERO) -> Vector2:
+	if viewport_size == Vector2.ZERO:
+		viewport_size = get_viewport_rect().size
 	var available_height := maxf(0.0, viewport_size.y - PREVIEW_PANEL_TOP - PREVIEW_PANEL_BOTTOM_MARGIN)
 	var panel_height := minf(PREVIEW_PANEL_SIZE.y, available_height)
 	if panel_height <= 0.0:
 		panel_height = PREVIEW_PANEL_SIZE.y
 	elif available_height >= PREVIEW_PANEL_MIN_HEIGHT:
 		panel_height = maxf(PREVIEW_PANEL_MIN_HEIGHT, panel_height)
-	var viewport_height := panel_height - PREVIEW_VIEWPORT_CHROME_HEIGHT
+	var viewport_height := maxf(0.0, panel_height - PREVIEW_VIEWPORT_CHROME_HEIGHT)
 	if available_height >= PREVIEW_PANEL_MIN_HEIGHT:
 		viewport_height = maxf(PREVIEW_VIEWPORT_MIN_HEIGHT, viewport_height)
+		panel_height = maxf(panel_height, PREVIEW_VIEWPORT_CHROME_HEIGHT + viewport_height)
 	else:
-		viewport_height = maxf(56.0, viewport_height)
+		panel_height = minf(panel_height, available_height)
 	var panel_size := Vector2(PREVIEW_PANEL_SIZE.x, panel_height)
 	preview_panel.custom_minimum_size = panel_size
 	preview_panel.size = panel_size
@@ -572,6 +582,7 @@ func _apply_responsive_preview_size() -> void:
 		preview_viewport_container.custom_minimum_size = Vector2(0.0, viewport_height)
 	if preview_pan_y_slider:
 		preview_pan_y_slider.custom_minimum_size = Vector2(18.0, viewport_height)
+	return panel_size
 
 func _set_preview_input_enabled(enabled: bool) -> void:
 	var filter := Control.MOUSE_FILTER_STOP if enabled else Control.MOUSE_FILTER_IGNORE

@@ -1,0 +1,25 @@
+[gd_scene format=3 uid="uid://h42d0tl4ky2o"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_pipeline"]
+albedo_color = Color(0.39688897, 0.39688933, 0.39688924, 1)
+metallic = 0.16
+metallic_specular = 0.34
+roughness = 0.57
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_pipeline"]
+material = SubResource("StandardMaterial3D_pipeline")
+top_radius = 0.1
+bottom_radius = 0.1
+height = 1.0
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_pipeline"]
+height = 1.0
+radius = 0.1
+
+[node name="PipelineObject" type="StaticBody3D" unique_id=2045714415]
+
+[node name="pipe" type="MeshInstance3D" parent="." unique_id=1542226935]
+mesh = SubResource("CylinderMesh_pipeline")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=24667457]
+shape = SubResource("CylinderShape3D_pipeline")

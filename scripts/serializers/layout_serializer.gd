@@ -89,6 +89,8 @@ func _serialize_node3d(node: Node3D) -> Dictionary:
 		if odf_type >= 0:
 			item["odf_type"] = odf_type
 			item["type"] = odf_type
+	if node.has_meta("build_view_layer"):
+		item["build_view_layer"] = int(node.get_meta("build_view_layer"))
 	return item
 
 func _clear_scene(root: Node, excluded_group: String) -> void:
@@ -121,6 +123,7 @@ func _instantiate_item(item: Dictionary, root: Node) -> void:
 	var cabinet_id := str(item.get("cabinet_id", "")).strip_edges()
 	if cabinet_id != "":
 		new_instance.set_meta("module_cabinet_id", cabinet_id)
+	new_instance.set_meta("build_view_layer", int(item.get("build_view_layer", 0)))
 	if (item.has("odf_type") or item.has("type")) and item.has("custom_state") and item["custom_state"] is Dictionary:
 		var custom_state := (item["custom_state"] as Dictionary).duplicate(true)
 		var odf_type := int(item.get("odf_type", item.get("type", 0)))
@@ -137,6 +140,8 @@ func _instantiate_item(item: Dictionary, root: Node) -> void:
 
 func _is_serializable_scene_root(node: Node, excluded_group: String) -> bool:
 	if not node is Node3D:
+		return false
+	if node.is_queued_for_deletion():
 		return false
 	if node.is_in_group(excluded_group):
 		return false

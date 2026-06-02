@@ -68,17 +68,19 @@ func handle_left_click_module(root: Node3D, block_scene: PackedScene, module_pan
 			toggle_target.call("toggle_open")
 			root.get_viewport().set_input_as_handled()
 			return
+		var cabinet_target := _find_cabinet_panel_target(collider)
+		if cabinet_target:
+			selected_module_object = collider
+			_close_opened_cabinet(cabinet_target)
+			opened_cabinet = cabinet_target
+			_hide_module_panel(module_panel)
+			cabinet_target.call("open_with_panel", module_panel)
+			root.get_viewport().set_input_as_handled()
+			return
 		if collider and collider.scene_file_path == block_scene.resource_path:
 			selected_module_object = collider
-			var cabinet_target := _find_cabinet_panel_target(collider)
-			if cabinet_target:
-				_close_opened_cabinet(cabinet_target)
-				opened_cabinet = cabinet_target
-				_hide_module_panel(module_panel)
-				cabinet_target.call("open_with_panel", module_panel)
-			else:
-				_close_opened_cabinet(null)
-				show_module_panel(collider, module_panel)
+			_close_opened_cabinet(null)
+			show_module_panel(collider, module_panel)
 			root.get_viewport().set_input_as_handled()
 
 func _close_opened_cabinet(except_cabinet: Node) -> void:
@@ -103,7 +105,7 @@ func _find_cabinet_panel_target(node: Node) -> Node:
 		current = current.get_parent()
 	return null
 
-func handle_right_click_operation(root: Node3D, grid_map: GridMap, preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, operation_panel: Control) -> void:
+func handle_right_click_operation(root: Node3D, grid_map: GridMap, preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, preview_pipe: MeshInstance3D, operation_panel: Control) -> void:
 	var camera = root.get_node_or_null("CameraPivot/Camera3D") as Camera3D
 	if not camera:
 		return
@@ -116,6 +118,8 @@ func handle_right_click_operation(root: Node3D, grid_map: GridMap, preview_cube:
 		exclude_array.append(preview_cube)
 	if preview_wall:
 		exclude_array.append(preview_wall)
+	if preview_pipe:
+		exclude_array.append(preview_pipe)
 	query.exclude = exclude_array
 	var result = root.get_world_3d().direct_space_state.intersect_ray(query)
 
@@ -179,7 +183,10 @@ func show_operation_panel(target: Node3D, operation_panel: Control, camera: Came
 
 func rotate_selected_object() -> void:
 	if selected_object:
-		selected_object.rotate_y(deg_to_rad(-45))
+		if selected_object.has_method("rotate_placement"):
+			selected_object.call("rotate_placement", -45.0)
+		else:
+			selected_object.rotate_y(deg_to_rad(-45))
 
 func delete_selected_object(operation_panel: Control) -> void:
 	if selected_object:

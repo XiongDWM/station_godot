@@ -1,18 +1,21 @@
 [gd_scene format=3 uid="uid://djaj7h1xxcu1f"]
 
+[ext_resource type="Script" uid="uid://c0ss6g1qvfuua" path="res://scripts/controllers/wall_controller.gd" id="1_wall_controller"]
+
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_7lqbf"]
-transparency = 1
-albedo_color = Color(0, 0, 0, 0.49411765)
-roughness = 0.36
+albedo_color = Color(0.88, 0.9, 0.92, 1)
+metallic_specular = 0.08
+roughness = 0.9
 
 [sub_resource type="BoxMesh" id="BoxMesh_kxkg7"]
 material = SubResource("StandardMaterial3D_7lqbf")
-size = Vector3(1, 2.5, 0.1)
+size = Vector3(1, 1.5, 0.2)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_7lqbf"]
-size = Vector3(1, 2.5, 0.1)
+size = Vector3(1, 1.5, 0.2)
 
 [node name="WallObject" type="StaticBody3D" unique_id=16275737]
+script = ExtResource("1_wall_controller")
 
 [node name="wall" type="MeshInstance3D" parent="." unique_id=1142220969]
 mesh = SubResource("BoxMesh_kxkg7")
