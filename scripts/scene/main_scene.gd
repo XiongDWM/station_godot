@@ -17,6 +17,11 @@ const LAYER_GRID_COLOR := Color(0.08, 0.08, 0.08, 0.72)
 const LAYER_GRID_DASH_LENGTH := 0.38
 const LAYER_GRID_GAP_LENGTH := 0.24
 const LAYER_GRID_ELEVATION := 0.02
+const VIEW_LAYER_Y := {
+	-1: -1.0,
+	0: 0.0,
+	1: 2.0,
+}
 
 @export_group("Ground Base")
 @export var ground_base_color: Color = Color(0.70, 0.74, 0.78, 1.0)
@@ -63,6 +68,10 @@ var scene_camera: Camera3D
 var ground_base: MeshInstance3D
 var layer_grid_overlay: MeshInstance3D
 var runtime_preview_pipe: MeshInstance3D
+var camera_mode_name := "orbit"
+var side_view_hovered_layer := 999
+var side_view_layer_planes := {}
+var side_view_layer_materials := {}
 
 func _ready():
 	# print("[MainScene._ready] btn_cube=", btn_cube, ", btn_wall=", btn_wall, ", preview_cube=", preview_cube, ", preview_wall=", preview_wall, ", block_scene=", block_scene, ", wall_scene=", wall_scene)
@@ -70,6 +79,7 @@ func _ready():
 	_setup_ground_base()
 	_setup_layer_grid_overlay()
 	scene_camera = get_node_or_null("CameraPivot/Camera3D") as Camera3D
+	_setup_side_view_layer_planes()
 	building_controller.initialize(preview_cube, preview_wall, runtime_preview_pipe, preview_rack)
 	building_controller.bind_buttons(btn_cube, btn_rack, btn_wall, btn_door, runtime_pipe_button, block_scene, rack_scene, wall_scene, door_scene, pipe_scene, preview_cube, preview_rack, preview_wall, runtime_preview_pipe, self, &"_on_building_mode_selected")
 	selection_controller.initialize(operation_panel, module_panel)
@@ -79,6 +89,7 @@ func _ready():
 	layout_flow_controller.bind_api_signals()
 	layout_flow_controller.bootstrap()
 	_apply_build_view_layer(active_build_view_layer)
+	on_camera_mode_changed("orbit")
 
 func _on_building_mode_selected(scene: PackedScene, preview: MeshInstance3D, placement_mode: String = "point"):
 	# print("[MainScene._on_building_mode_selected] scene=", scene, ", preview=", preview)
@@ -86,6 +97,8 @@ func _on_building_mode_selected(scene: PackedScene, preview: MeshInstance3D, pla
 
 func _process(_delta):
 	_update_ground_base_position()
+	if camera_mode_name == "side":
+		_update_side_view_layer_hover()
 	if selection_controller.has_visible_panel(operation_panel, module_panel):
 		return
 	if building_controller.is_active() and building_controller.get_preview():
@@ -94,6 +107,13 @@ func _process(_delta):
 func _unhandled_input(event):
 	if building_controller.handle_unhandled_input(self, event):
 		return
+	if camera_mode_name == "side" and event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if side_view_hovered_layer != 999:
+			var camera_pivot := get_node_or_null("CameraPivot")
+			if camera_pivot and camera_pivot.has_method("exit_side_view_to_orbit"):
+				camera_pivot.call("exit_side_view_to_orbit", side_view_hovered_layer)
+				get_viewport().set_input_as_handled()
+				return
 	if selection_controller.handle_unhandled_input(self, event, operation_panel, module_panel):
 		return
 	if Input.is_key_pressed(KEY_CTRL):
@@ -210,7 +230,7 @@ func _update_build_toolbar_for_layer(layer: int) -> void:
 		runtime_view_layer_button.expand_icon = true
 
 func _enforce_build_mode_for_active_layer() -> void:
-	var placement_mode := building_controller.get_placement_mode()
+	var placement_mode :Variant= building_controller.get_placement_mode()
 	if active_build_view_layer == 0 and placement_mode == "line":
 		building_controller.cancel_build_mode()
 	elif active_build_view_layer != 0 and placement_mode == "point" and building_controller.is_active():
@@ -224,18 +244,19 @@ func _apply_scene_layer_visibility() -> void:
 		if node.scene_file_path == "" or not node.has_meta("build_view_layer"):
 			continue
 		var layer := int(node.get_meta("build_view_layer", 0))
-		node.visible = layer == active_build_view_layer
+		node.visible = camera_mode_name == "side" or layer == active_build_view_layer
 
 func _update_layer_plane_visuals(layer: int) -> void:
 	if grid_map:
-		grid_map.visible = layer == 0
+		grid_map.visible = layer == 0 or camera_mode_name == "side"
 	if ground_base:
-		ground_base.visible = layer == 0
+		ground_base.visible = layer == 0 or camera_mode_name == "side"
 	if not layer_grid_overlay:
 		return
-	layer_grid_overlay.visible = layer != 0
+	layer_grid_overlay.visible = layer != 0 and camera_mode_name != "side"
 	if layer != 0:
 		layer_grid_overlay.position.y = _get_view_layer_plane_y(layer) + LAYER_GRID_ELEVATION
+	_update_side_view_layer_plane_visibility()
 
 func _setup_ground_base() -> void:
 	if ground_base:
@@ -266,12 +287,15 @@ func _get_ground_base_position() -> Vector3:
 	var bounds := _get_grid_bounds()
 	var center_x := float(bounds.get("center_x", 0.0))
 	var center_z := float(bounds.get("center_z", 0.0))
+	var base_y := -GROUND_BASE_THICKNESS
+	if grid_map:
+		base_y -= grid_map.cell_size.y * 0.5 + 0.02
 	if scene_camera:
 		center_x = scene_camera.global_position.x
 		center_z = scene_camera.global_position.z
 	return Vector3(
 		center_x,
-		0.0,
+		base_y,
 		center_z
 	)
 
@@ -310,13 +334,7 @@ func _get_grid_bounds() -> Dictionary:
 	}
 
 func _get_view_layer_plane_y(layer: int) -> float:
-	match layer:
-		-1:
-			return -1.0
-		1:
-			return 2.0
-		_:
-			return 0.0
+	return float(VIEW_LAYER_Y.get(layer, VIEW_LAYER_Y[0]))
 
 func _setup_layer_grid_overlay() -> void:
 	if layer_grid_overlay:
@@ -333,6 +351,122 @@ func _setup_layer_grid_overlay() -> void:
 		material.vertex_color_use_as_albedo = true
 		layer_grid_overlay.material_override = material
 	add_child(layer_grid_overlay)
+
+func _setup_side_view_layer_planes() -> void:
+	if not side_view_layer_planes.is_empty():
+		return
+	var bounds := _get_grid_bounds()
+	if bounds.is_empty():
+		return
+	var side_grid_mesh := _build_layer_grid_mesh()
+	if not side_grid_mesh:
+		return
+	for layer in BUILD_VIEW_ORDER:
+		if layer == 0:
+			continue
+		var plane := MeshInstance3D.new()
+		plane.name = "SideViewLayerPlane_%d" % layer
+		plane.mesh = side_grid_mesh
+		plane.position = Vector3(0.0, _get_view_layer_plane_y(layer) + LAYER_GRID_ELEVATION, 0.0)
+		var material := StandardMaterial3D.new()
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.vertex_color_use_as_albedo = true
+		material.albedo_color = Color(1.0, 1.0, 1.0, 0.0)
+		plane.material_override = material
+		plane.visible = false
+		side_view_layer_planes[layer] = plane
+		side_view_layer_materials[layer] = material
+		add_child(plane)
+
+func _update_side_view_layer_plane_visibility() -> void:
+	if camera_mode_name != "side":
+		for layer in side_view_layer_planes.keys():
+			var hidden_plane := side_view_layer_planes[layer] as MeshInstance3D
+			if hidden_plane:
+				hidden_plane.visible = false
+		return
+	for layer in side_view_layer_planes.keys():
+		var plane := side_view_layer_planes[layer] as MeshInstance3D
+		if plane:
+			plane.visible = camera_mode_name == "side"
+
+func _update_side_view_layer_hover() -> void:
+	if camera_mode_name != "side":
+		side_view_hovered_layer = 999
+		_update_side_view_layer_plane_materials()
+		return
+	if not scene_camera or not grid_map:
+		return
+	var mouse_pos := get_viewport().get_mouse_position()
+	var ray_origin := scene_camera.project_ray_origin(mouse_pos)
+	var ray_direction := scene_camera.project_ray_normal(mouse_pos)
+	var hovered_layer := 999
+	var best_distance := INF
+	for layer in side_view_layer_planes.keys():
+		var plane_y := _get_view_layer_plane_y(layer)
+		var plane := Plane(Vector3.UP, plane_y)
+		var hit : Variant = plane.intersects_ray(ray_origin, ray_direction)
+		if hit == null:
+			continue
+		var point : Vector3 = hit as Vector3
+		if not _is_point_inside_grid_bounds(point):
+			continue
+		var distance := ray_origin.distance_to(point)
+		if distance < best_distance:
+			best_distance = distance
+			hovered_layer = layer
+	side_view_hovered_layer = hovered_layer
+	_update_side_view_layer_plane_materials()
+
+func _update_side_view_layer_plane_materials() -> void:
+	var pulse := 0.62 + 0.38 * (0.5 + 0.5 * sin(Time.get_ticks_msec() / 220.0))
+	for layer in side_view_layer_materials.keys():
+		var material := side_view_layer_materials[layer] as StandardMaterial3D
+		if not material:
+			continue
+		if camera_mode_name == "side" and layer == side_view_hovered_layer:
+			material.albedo_color = Color(0.58, 0.86, 1.0, pulse)
+		elif camera_mode_name == "side":
+			material.albedo_color = Color(1.0, 1.0, 1.0, 0.55)
+		else:
+			material.albedo_color = Color(1.0, 1.0, 1.0, 0.0)
+
+func _is_point_inside_grid_bounds(point: Vector3) -> bool:
+	var bounds := _get_grid_bounds()
+	if bounds.is_empty():
+		return false
+	var half_width := float(bounds.get("width", 0.0)) * 0.5
+	var half_depth := float(bounds.get("depth", 0.0)) * 0.5
+	var center_x := float(bounds.get("center_x", 0.0))
+	var center_z := float(bounds.get("center_z", 0.0))
+	return point.x >= center_x - half_width and point.x <= center_x + half_width and point.z >= center_z - half_depth and point.z <= center_z + half_depth
+
+func on_camera_mode_changed(mode_name: String) -> void:
+	camera_mode_name = mode_name
+	if camera_mode_name != "side":
+		side_view_hovered_layer = 999
+	_apply_scene_layer_visibility()
+	_update_layer_plane_visuals(active_build_view_layer)
+	_update_side_view_layer_plane_materials()
+
+func request_side_view_enter_layer(layer: int) -> void:
+	_apply_build_view_layer(layer)
+
+func get_default_first_person_position(fallback: Vector3) -> Vector3:
+	var bounds := _get_grid_bounds()
+	if bounds.is_empty() or not grid_map:
+		return Vector3(fallback.x, 1.0, fallback.z)
+	var cell_size := grid_map.cell_size
+	var clamped_x := clampf(fallback.x, float(bounds.get("center_x", 0.0)) - float(bounds.get("width", 0.0)) * 0.5 + cell_size.x, float(bounds.get("center_x", 0.0)) + float(bounds.get("width", 0.0)) * 0.5 - cell_size.x)
+	var clamped_z := clampf(fallback.z, float(bounds.get("center_z", 0.0)) - float(bounds.get("depth", 0.0)) * 0.5 + cell_size.z, float(bounds.get("center_z", 0.0)) + float(bounds.get("depth", 0.0)) * 0.5 - cell_size.z)
+	return Vector3(clamped_x, 1.0, clamped_z)
+
+func get_default_side_view_focus_position(fallback: Vector3) -> Vector3:
+	var bounds := _get_grid_bounds()
+	if bounds.is_empty():
+		return Vector3(fallback.x, 0.5, fallback.z)
+	return Vector3(float(bounds.get("center_x", 0.0)), 0.5, float(bounds.get("center_z", 0.0)))
 
 func _build_layer_grid_mesh() -> ArrayMesh:
 	if not grid_map:

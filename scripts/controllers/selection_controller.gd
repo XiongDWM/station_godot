@@ -65,7 +65,7 @@ func handle_left_click_module(root: Node3D, block_scene: PackedScene, module_pan
 		var collider = result.collider as Node3D
 		var toggle_target := _find_toggle_open_target(collider)
 		if toggle_target:
-			toggle_target.call("toggle_open")
+			toggle_target.call("toggle_open", camera.global_position)
 			root.get_viewport().set_input_as_handled()
 			return
 		var cabinet_target := _find_cabinet_panel_target(collider)

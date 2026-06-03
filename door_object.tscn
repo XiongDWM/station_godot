@@ -8,10 +8,10 @@ metallic = 0.79
 
 [sub_resource type="BoxMesh" id="BoxMesh_qrvnv"]
 material = SubResource("StandardMaterial3D_1v8lc")
-size = Vector3(1, 1.5, 0.1)
+size = Vector3(1, 2, 0.1)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_naxlh"]
-size = Vector3(1, 1.5, 1)
+size = Vector3(1, 2, 0.2)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_qrvnv"]
 albedo_color = Color(0.7529412, 0.7529412, 0.7529412, 1)

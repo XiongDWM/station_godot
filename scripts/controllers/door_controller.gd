@@ -1,10 +1,11 @@
 extends StaticBody3D
 
-const OPEN_ANGLE_DEGREES := -45.0
+const OPEN_ANGLE_DEGREES := 90.0
 const HANDLE_PIVOT_LOCAL := Vector3(-0.5, 0.0, 0.0)
 const TWEEN_DURATION := 0.18
 
 var is_open := false
+var open_angle_sign := 1.0
 var closed_transform: Transform3D
 var door_tween: Tween
 var has_closed_transform := false
@@ -15,11 +16,13 @@ var has_closed_transform := false
 func _ready() -> void:
 	_capture_closed_transform.call_deferred()
 
-func toggle_open() -> void:
+func toggle_open(viewer_position: Variant = null) -> void:
 	if not has_closed_transform:
 		_capture_closed_transform()
+	if not is_open:
+		open_angle_sign = _resolve_open_angle_sign(viewer_position)
 	is_open = not is_open
-	var target_angle := deg_to_rad(OPEN_ANGLE_DEGREES if is_open else 0.0)
+	var target_angle := deg_to_rad(OPEN_ANGLE_DEGREES * open_angle_sign if is_open else 0.0)
 	var target_transform := _get_transform_around_handle_axis(target_angle)
 	if door_tween:
 		door_tween.kill()
@@ -33,6 +36,7 @@ func get_serialized_state() -> Dictionary:
 		_capture_closed_transform()
 	return {
 		"is_open": is_open,
+		"open_angle_sign": open_angle_sign,
 		"closed_transform": _transform_to_dict(closed_transform)
 	}
 
@@ -44,7 +48,10 @@ func apply_serialized_state(state: Dictionary) -> void:
 		_capture_closed_transform()
 
 	is_open = bool(state.get("is_open", false))
-	var target_angle := deg_to_rad(OPEN_ANGLE_DEGREES if is_open else 0.0)
+	open_angle_sign = signf(float(state.get("open_angle_sign", 1.0)))
+	if is_zero_approx(open_angle_sign):
+		open_angle_sign = 1.0
+	var target_angle := deg_to_rad(OPEN_ANGLE_DEGREES * open_angle_sign if is_open else 0.0)
 	global_transform = _get_transform_around_handle_axis(target_angle)
 	refresh_diagonal_fit()
 
@@ -83,6 +90,33 @@ func _get_transform_around_handle_axis(angle: float) -> Transform3D:
 	var rotated_origin := pivot_global + rotation_basis * (closed_transform.origin - pivot_global)
 	var rotated_basis := rotation_basis * closed_transform.basis
 	return Transform3D(rotated_basis, rotated_origin)
+
+func _resolve_open_angle_sign(viewer_position: Variant) -> float:
+	var viewer_global : Variant= _get_viewer_position(viewer_position)
+	if viewer_global == null:
+		return 1.0
+	var viewer_offset := (viewer_global as Vector3) - closed_transform.origin
+	viewer_offset.y = 0.0
+	if viewer_offset.length_squared() < 0.0001:
+		return 1.0
+	var positive_transform := _get_transform_around_handle_axis(deg_to_rad(OPEN_ANGLE_DEGREES))
+	var negative_transform := _get_transform_around_handle_axis(deg_to_rad(-OPEN_ANGLE_DEGREES))
+	var positive_delta := positive_transform.origin - closed_transform.origin
+	positive_delta.y = 0.0
+	var negative_delta := negative_transform.origin - closed_transform.origin
+	negative_delta.y = 0.0
+	return -1.0 if positive_delta.dot(viewer_offset) >= negative_delta.dot(viewer_offset) else 1.0
+
+func _get_viewer_position(viewer_position: Variant) -> Variant:
+	if viewer_position is Vector3:
+		return viewer_position as Vector3
+	var scene_root := get_tree().current_scene
+	if not scene_root:
+		return null
+	var camera := scene_root.get_node_or_null("CameraPivot/Camera3D") as Camera3D
+	if not camera:
+		return null
+	return camera.global_position
 
 func _transform_to_dict(transform: Transform3D) -> Dictionary:
 	return {

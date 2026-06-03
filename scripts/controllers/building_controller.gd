@@ -11,7 +11,7 @@ const PREVIEW_VALID_COLOR := Color(0.0, 0.654902, 0.0, 0.38431373)
 const PREVIEW_INVALID_COLOR := Color(0.88, 0.12, 0.12, 0.48)
 const PIPE_LAYER_Y := {
 	-1: -1.0,
-	0: 1.25,
+	0: 0.0,
 	1: 2.0,
 }
 
@@ -25,9 +25,11 @@ var current_building := {
 	"wall_edge_index": 0,
 	"wall_edge_manual": false,
 	"wall_rotation_degrees": 0.0,
+	"base_preview_yaw": 0.0,
 	"point_cell_size": Vector3.ONE,
 	"collision_size": Vector3.ZERO,
 	"is_placeable": true,
+	"surface_snap_target": null,
 }
 
 func initialize(preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, preview_pipe: MeshInstance3D, preview_rack: MeshInstance3D = null) -> void:
@@ -70,9 +72,11 @@ func set_building_mode(scene: PackedScene, preview: MeshInstance3D, operation_pa
 		current_building["wall_edge_index"] = 0
 		current_building["wall_edge_manual"] = false
 		current_building["wall_rotation_degrees"] = 0.0
+		current_building["base_preview_yaw"] = preview.rotation.y if preview else 0.0
 		current_building["point_cell_size"] = Vector3.ONE
 		current_building["collision_size"] = _get_scene_collision_box_size(scene)
 		current_building["is_placeable"] = true
+		current_building["surface_snap_target"] = null
 		if operation_panel:
 			operation_panel.visible = false
 		if module_panel:
@@ -120,9 +124,11 @@ func cancel_build_mode() -> void:
 	current_building["wall_edge_index"] = 0
 	current_building["wall_edge_manual"] = false
 	current_building["wall_rotation_degrees"] = 0.0
+	current_building["base_preview_yaw"] = 0.0
 	current_building["point_cell_size"] = Vector3.ONE
 	current_building["collision_size"] = Vector3.ZERO
 	current_building["is_placeable"] = true
+	current_building["surface_snap_target"] = null
 	_reset_line_preview()
 
 func handle_preview_logic(root: Node3D, grid_map: GridMap) -> void:
@@ -169,6 +175,7 @@ func handle_preview_logic(root: Node3D, grid_map: GridMap) -> void:
 		return
 	var size_after_scale = _get_current_building_size(preview_mesh)
 	var y_offset = size_after_scale.y / 2
+	current_building["surface_snap_target"] = null
 
 	var final_pos: Vector3
 	var surface_snap_points: Array[Vector3] = []
@@ -182,6 +189,8 @@ func handle_preview_logic(root: Node3D, grid_map: GridMap) -> void:
 		)
 		final_pos = grid_map.map_to_local(map_coord)
 		final_pos.y = _get_floor_top_y(grid_map) + y_offset
+		if not _uses_edge_snap():
+			_apply_point_preview_orientation(preview_mesh)
 		if _uses_edge_snap():
 			var edge_index := _resolve_wall_edge_index(local_pos, final_pos, cell_size)
 			current_building["wall_edge_index"] = edge_index
@@ -246,7 +255,8 @@ func handle_unhandled_input(root: Node, event: InputEvent) -> bool:
 				current_building["wall_rotation_degrees"] = float(current_building.get("wall_rotation_degrees", 0.0)) + 45.0
 				_apply_wall_preview_orientation(preview_mesh)
 			else:
-				preview_mesh.rotate_y(deg_to_rad(45))
+				current_building["wall_rotation_degrees"] = float(current_building.get("wall_rotation_degrees", 0.0)) + 90.0
+				_apply_point_preview_orientation(preview_mesh)
 			_apply_preview_fit()
 			root.get_viewport().set_input_as_handled()
 			return true
@@ -255,7 +265,8 @@ func handle_unhandled_input(root: Node, event: InputEvent) -> bool:
 				current_building["wall_rotation_degrees"] = float(current_building.get("wall_rotation_degrees", 0.0)) - 45.0
 				_apply_wall_preview_orientation(preview_mesh)
 			else:
-				preview_mesh.rotate_y(deg_to_rad(-45))
+				current_building["wall_rotation_degrees"] = float(current_building.get("wall_rotation_degrees", 0.0)) - 90.0
+				_apply_point_preview_orientation(preview_mesh)
 			_apply_preview_fit()
 			root.get_viewport().set_input_as_handled()
 			return true
@@ -324,6 +335,13 @@ func _apply_wall_preview_orientation(preview: Node3D) -> void:
 	var rotation_offset := float(current_building.get("wall_rotation_degrees", 0.0))
 	var base_yaw := _get_wall_edge_base_yaw(edge_index)
 	preview.rotation = Vector3(0.0, deg_to_rad(base_yaw + rotation_offset), 0.0)
+
+func _apply_point_preview_orientation(preview: Node3D) -> void:
+	if not preview:
+		return
+	var base_yaw := float(current_building.get("base_preview_yaw", 0.0))
+	var rotation_offset := deg_to_rad(float(current_building.get("wall_rotation_degrees", 0.0)))
+	preview.rotation.y = base_yaw + rotation_offset
 
 func _get_wall_edge_base_yaw(edge_index: int) -> float:
 	match posmod(edge_index, 4):
@@ -414,8 +432,10 @@ func _find_collision_shape(node: Node) -> CollisionShape3D:
 func _try_get_surface_snap_position(hit_result: Dictionary, preview: Node3D, size_after_scale: Vector3, grid_map: GridMap, out_points: Array[Vector3]) -> bool:
 	if hit_result.is_empty() or not preview or not grid_map:
 		return false
-	if not _is_surface_snap_target(hit_result.get("collider")):
+	var snap_target := _get_surface_snap_target_node(hit_result.get("collider"))
+	if not snap_target:
 		return false
+	current_building["surface_snap_target"] = snap_target
 	var hit_normal: Vector3 = hit_result.get("normal", Vector3.ZERO)
 	var horizontal_normal := Vector3(hit_normal.x, 0.0, hit_normal.z)
 	if horizontal_normal.length_squared() < 0.0001:
@@ -423,12 +443,14 @@ func _try_get_surface_snap_position(hit_result: Dictionary, preview: Node3D, siz
 	horizontal_normal = horizontal_normal.normalized()
 	var hit_position: Vector3 = hit_result.get("position", Vector3.ZERO)
 	var half_size := size_after_scale * 0.5
-	var preview_basis := preview.global_transform.basis.orthonormalized()
+	var manual_offset := deg_to_rad(float(current_building.get("wall_rotation_degrees", 0.0)))
+	var snapped_yaw := _get_surface_snap_yaw(horizontal_normal, preview.rotation.y - manual_offset, half_size)
+	snapped_yaw += manual_offset
+	var preview_basis := Basis(Vector3.UP, snapped_yaw).orthonormalized()
 	var support_extent := absf(horizontal_normal.dot(preview_basis.x)) * half_size.x + absf(horizontal_normal.dot(preview_basis.z)) * half_size.z
 	var snap_position := hit_position + horizontal_normal * (support_extent + SURFACE_SNAP_MARGIN)
-	snap_position = _relocate_surface_snap_center(grid_map, snap_position, preview_basis, half_size, horizontal_normal)
 	snap_position.y = _get_floor_top_y(grid_map) + half_size.y
-	preview.rotation.y = _get_surface_snap_yaw(horizontal_normal, preview.rotation.y)
+	preview.rotation.y = snapped_yaw
 	out_points.clear()
 	out_points.append(snap_position)
 	return true
@@ -470,16 +492,22 @@ func _set_preview_validity(preview_mesh: MeshInstance3D, is_valid: bool) -> void
 func _is_preview_placeable(root: Node3D, preview_mesh: MeshInstance3D) -> bool:
 	if not root or not preview_mesh or not _should_block_overlap_for_current_scene():
 		return true
-	var preview_bounds := _compute_world_aabb(preview_mesh.global_position, preview_mesh.global_transform.basis, _get_current_building_size(preview_mesh))
+	var preview_volume := _build_upright_overlap_volume(preview_mesh.global_position, preview_mesh.global_transform.basis, _get_current_building_size(preview_mesh))
+	var ignored_target := current_building.get("surface_snap_target", null) as Node
+	var current_scene := current_building["scene"] as PackedScene
 	for child in root.get_children():
 		if not _is_overlap_candidate(child):
+			continue
+		if ignored_target and child == ignored_target:
+			continue
+		if current_scene and current_scene.resource_path == WALL_SCENE_PATH and (child as Node3D).scene_file_path == WALL_SCENE_PATH:
 			continue
 		var child_node := child as Node3D
 		var child_size := _get_node_collision_box_size(child_node)
 		if child_size == Vector3.ZERO:
 			continue
-		var child_bounds := _compute_world_aabb(child_node.global_position, child_node.global_transform.basis, child_size)
-		if _aabb_overlaps(preview_bounds, child_bounds):
+		var child_volume := _build_upright_overlap_volume(child_node.global_position, child_node.global_transform.basis, child_size)
+		if _overlap_volumes_intersect(preview_volume, child_volume):
 			return false
 	return true
 
@@ -511,54 +539,90 @@ func _get_node_collision_box_size(node: Node) -> Vector3:
 		return (collision_shape.shape as BoxShape3D).size
 	return Vector3.ZERO
 
-func _compute_world_aabb(center: Vector3, basis: Basis, size: Vector3) -> AABB:
+func _build_upright_overlap_volume(center: Vector3, basis: Basis, size: Vector3) -> Dictionary:
 	var half := size.abs() * 0.5
-	var axis_x := basis.x.normalized() * half.x
-	var axis_y := basis.y.normalized() * half.y
-	var axis_z := basis.z.normalized() * half.z
-	var world_half := Vector3(
-		absf(axis_x.x) + absf(axis_y.x) + absf(axis_z.x),
-		absf(axis_x.y) + absf(axis_y.y) + absf(axis_z.y),
-		absf(axis_x.z) + absf(axis_y.z) + absf(axis_z.z)
-	)
-	return AABB(center - world_half, world_half * 2.0)
-
-func _aabb_overlaps(first: AABB, second: AABB) -> bool:
-	return first.position.x < second.position.x + second.size.x and first.position.x + first.size.x > second.position.x \
-		and first.position.y < second.position.y + second.size.y and first.position.y + first.size.y > second.position.y \
-		and first.position.z < second.position.z + second.size.z and first.position.z + first.size.z > second.position.z
-
-func _relocate_surface_snap_center(grid_map: GridMap, snap_position: Vector3, preview_basis: Basis, half_size: Vector3, surface_normal: Vector3) -> Vector3:
-	if not grid_map:
-		return snap_position
-	var tangent := Vector3(surface_normal.z, 0.0, -surface_normal.x).normalized()
-	if tangent.length_squared() < 0.0001:
-		return snap_position
-	var tangent_extent := absf(tangent.dot(preview_basis.x)) * half_size.x + absf(tangent.dot(preview_basis.z)) * half_size.z
-	var tangent_cell_size := grid_map.cell_size.z if absf(tangent.z) >= absf(tangent.x) else grid_map.cell_size.x
-	if tangent_extent * 2.0 <= tangent_cell_size + 0.001:
-		return snap_position
-	var local_position := grid_map.to_local(snap_position)
-	if absf(tangent.z) >= absf(tangent.x):
-		var map_coord_z := int(round(local_position.z / grid_map.cell_size.z))
-		local_position.z = grid_map.map_to_local(Vector3i(0, 0, map_coord_z)).z
+	var axis_x := Vector2(basis.x.x, basis.x.z)
+	if axis_x.length_squared() < 0.0001:
+		axis_x = Vector2.RIGHT
 	else:
-		var map_coord_x := int(round(local_position.x / grid_map.cell_size.x))
-		local_position.x = grid_map.map_to_local(Vector3i(map_coord_x, 0, 0)).x
-	return grid_map.to_global(local_position)
+		axis_x = axis_x.normalized()
+	var axis_z := Vector2(basis.z.x, basis.z.z)
+	if axis_z.length_squared() < 0.0001:
+		axis_z = Vector2(0.0, 1.0)
+	else:
+		axis_z = axis_z.normalized()
+	return {
+		"center": Vector2(center.x, center.z),
+		"axes": [axis_x, axis_z],
+		"half_extents": Vector2(half.x, half.z),
+		"min_y": center.y - half.y,
+		"max_y": center.y + half.y,
+	}
 
-func _is_surface_snap_target(collider: Variant) -> bool:
+func _overlap_volumes_intersect(first: Dictionary, second: Dictionary) -> bool:
+	if float(first.get("max_y", 0.0)) <= float(second.get("min_y", 0.0)):
+		return false
+	if float(first.get("min_y", 0.0)) >= float(second.get("max_y", 0.0)):
+		return false
+	var axes: Array[Vector2] = []
+	for axis in first.get("axes", []):
+		axes.append(axis)
+	for axis in second.get("axes", []):
+		axes.append(axis)
+	for axis in axes:
+		var normalized_axis := axis.normalized()
+		if normalized_axis.length_squared() < 0.0001:
+			continue
+		var first_projection := _project_overlap_volume(first, normalized_axis)
+		var second_projection := _project_overlap_volume(second, normalized_axis)
+		if first_projection.y <= second_projection.x or second_projection.y <= first_projection.x:
+			return false
+	return true
+
+func _project_overlap_volume(volume: Dictionary, axis: Vector2) -> Vector2:
+	var center := volume.get("center", Vector2.ZERO) as Vector2
+	var projected_center := center.dot(axis)
+	var axes :Variant= volume.get("axes", [])
+	var half_extents := volume.get("half_extents", Vector2.ZERO) as Vector2
+	var radius := 0.0
+	if axes.size() >= 2:
+		radius = absf((axes[0] as Vector2).dot(axis)) * half_extents.x + absf((axes[1] as Vector2).dot(axis)) * half_extents.y
+	return Vector2(projected_center - radius, projected_center + radius)
+
+
+func _get_surface_snap_target_node(collider: Variant) -> Node3D:
 	var target := collider as Node
 	if not target:
-		return false
-	return target.scene_file_path == WALL_SCENE_PATH or target.scene_file_path == DOOR_SCENE_PATH
+		return null
+	var current: Node = target
+	while current:
+		if current is Node3D and (current.scene_file_path == WALL_SCENE_PATH or current.scene_file_path == DOOR_SCENE_PATH):
+			return current as Node3D
+		current = current.get_parent()
+	return null
 
-func _get_surface_snap_yaw(surface_normal: Vector3, current_yaw: float) -> float:
+func _get_surface_snap_yaw(surface_normal: Vector3, current_yaw: float, half_size: Vector3) -> float:
+	if is_equal_approx(half_size.x, half_size.z):
+		return current_yaw
 	var facing_yaw := atan2(surface_normal.x, surface_normal.z)
-	var opposite_yaw := wrapf(facing_yaw + PI, -PI, PI)
-	var facing_delta := absf(wrapf(facing_yaw - current_yaw, -PI, PI))
-	var opposite_delta := absf(wrapf(opposite_yaw - current_yaw, -PI, PI))
-	return facing_yaw if facing_delta <= opposite_delta else opposite_yaw
+	var candidates := [
+		wrapf(facing_yaw, -PI, PI),
+		wrapf(facing_yaw + PI, -PI, PI),
+		wrapf(facing_yaw + PI * 0.5, -PI, PI),
+		wrapf(facing_yaw - PI * 0.5, -PI, PI),
+	]
+	var best_yaw :Variant= candidates[0]
+	var best_extent := -INF
+	var best_delta := INF
+	for candidate in candidates:
+		var candidate_basis := Basis(Vector3.UP, candidate).orthonormalized()
+		var extent := absf(surface_normal.dot(candidate_basis.x)) * half_size.x + absf(surface_normal.dot(candidate_basis.z)) * half_size.z
+		var delta := absf(wrapf(candidate - current_yaw, -PI, PI))
+		if extent > best_extent + 0.0001 or (is_equal_approx(extent, best_extent) and delta < best_delta):
+			best_extent = extent
+			best_delta = delta
+			best_yaw = candidate
+	return best_yaw
 
 func _should_center_wall_on_cell() -> bool:
 	var rotation_offset := float(current_building.get("wall_rotation_degrees", 0.0))

@@ -85,7 +85,7 @@ size = Vector3(0.8, 2, 0.8)
 
 [sub_resource type="BoxMesh" id="BoxMesh_uxrcv"]
 material = SubResource("StandardMaterial3D_x4av3")
-size = Vector3(1, 1.5, 0.2)
+size = Vector3(1, 2, 0.2)
 
 [node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "btn_cube", "btn_rack", "btn_wall", "preview_cube", "preview_rack", "preview_wall", "module_panel", "operation_panel", "btn_rotate", "btn_delete", "btn_save", "left_menu_panel", "build_panel", "http_request", "btn_door", "preview_ac", "btn_pipe", "btn_view_layer", "preview_pipe", "runtime_pipe_button", "runtime_view_layer_button")]
 script = ExtResource("1_rf2cd")
