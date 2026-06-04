@@ -6,6 +6,7 @@ var root: Node3D = null
 var http_request: HTTPRequest = null
 var layout_serializer = null
 var current_station_id: int = -1
+var save_request_pending := false
 
 func setup(target_root: Node3D, request_node: HTTPRequest, serializer) -> void:
 	root = target_root
@@ -49,8 +50,14 @@ func save_layoutdata() -> String:
 	if app_state and app_state.has_method("get_station_id"):
 		current_station_id = app_state.get_station_id()
 	_cache_layout_data(json_string)
-	if http_request and http_request.has_method("save_layout_data"):
-		http_request.save_layout_data(json_string, current_station_id)
+	if not http_request or not http_request.has_method("save_layout_data"):
+		_show_save_notification(false, "保存失败: API 未就绪")
+		return json_string
+	if current_station_id <= 0:
+		_show_save_notification(false, "保存失败: station_id 获取失败")
+		return json_string
+	save_request_pending = true
+	http_request.save_layout_data(json_string, current_station_id)
 	return json_string
 
 func _ensure_layout_node_ids() -> void:
@@ -108,9 +115,35 @@ func _on_layout_data_received(data) -> void:
 
 func _on_layout_saved(data) -> void:
 	print("保存成功:", data)
+	if not save_request_pending:
+		return
+	save_request_pending = false
+	var success := _is_success_response(data)
+	_show_save_notification(success, _get_save_response_message(data, success))
 
 func _on_api_request_failed(message: String, response_code: int) -> void:
 	push_error("API 请求失败: %s (%d)" % [message, response_code])
+	if save_request_pending:
+		save_request_pending = false
+		_show_save_notification(false, "保存失败: %s" % message)
+
+func _is_success_response(data) -> bool:
+	if data is Dictionary:
+		return int((data as Dictionary).get("code", 0)) == 200
+	return false
+
+func _get_save_response_message(data, success: bool) -> String:
+	var fallback := "保存成功" if success else "保存失败"
+	if data is Dictionary:
+		var response := data as Dictionary
+		var detail := str(response.get("list", response.get("msg", ""))).strip_edges()
+		if detail != "":
+			return "%s: %s" % [fallback, detail]
+	return fallback
+
+func _show_save_notification(success: bool, message: String) -> void:
+	if root and root.has_method("show_save_notification"):
+		root.call("show_save_notification", success, message)
 
 func _cache_layout_data(layout_json: String) -> void:
 	var app_state = _get_app_state()

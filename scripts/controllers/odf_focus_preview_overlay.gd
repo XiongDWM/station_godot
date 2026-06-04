@@ -51,6 +51,13 @@ var preview_camera: Camera3D
 var preview_pan_x_slider: HSlider
 var preview_pan_y_slider: VSlider
 var is_ui_built := false
+var preview_layout_cache_valid := false
+var preview_last_viewport_size := Vector2.ZERO
+var preview_last_left_panel_rect := Rect2()
+var connector_cache_valid := false
+var connector_last_camera_position := Vector3.ZERO
+var connector_last_camera_rotation := Vector3.ZERO
+var connector_last_target_position := Vector3.ZERO
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -66,8 +73,9 @@ func _process(_delta: float) -> void:
 	if not is_instance_valid(current_target):
 		hide_preview()
 		return
-	_update_panel_layout()
-	queue_redraw()
+	var layout_changed := _update_panel_layout()
+	if layout_changed or _connector_state_changed():
+		queue_redraw()
 
 func _input(event: InputEvent) -> void:
 	if not visible or not preview_panel or not preview_panel.visible:
@@ -127,8 +135,9 @@ func show_for_target(target: Node3D) -> void:
 	preview_panel.visible = true
 	visible = true
 	_set_preview_input_enabled(true)
-	if preview_viewport:
-		preview_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	preview_layout_cache_valid = false
+	connector_cache_valid = false
+	_request_preview_render()
 	set_process(true)
 	set_process_input(true)
 	queue_redraw()
@@ -136,6 +145,8 @@ func show_for_target(target: Node3D) -> void:
 func hide_preview() -> void:
 	current_target = null
 	is_drag_rotating = false
+	preview_layout_cache_valid = false
+	connector_cache_valid = false
 	if preview_panel:
 		preview_panel.visible = false
 	_set_preview_input_enabled(false)
@@ -292,18 +303,22 @@ func _build_action_button(label_text: String, callback: Callable) -> Button:
 func _on_zoom_out_pressed() -> void:
 	preview_zoom = maxf(MIN_ZOOM, preview_zoom - ZOOM_STEP)
 	_apply_zoom()
+	_request_preview_render()
 
 func _on_zoom_in_pressed() -> void:
 	preview_zoom = minf(MAX_ZOOM, preview_zoom + ZOOM_STEP)
 	_apply_zoom()
+	_request_preview_render()
 
 func _on_rotate_left_pressed() -> void:
 	preview_yaw_degrees -= ROTATION_STEP_DEGREES
 	_apply_preview_rotation()
+	_request_preview_render()
 
 func _on_rotate_right_pressed() -> void:
 	preview_yaw_degrees += ROTATION_STEP_DEGREES
 	_apply_preview_rotation()
+	_request_preview_render()
 
 func _on_close_pressed() -> void:
 	close_preview_only()
@@ -322,10 +337,12 @@ func _apply_zoom() -> void:
 func _on_pan_x_changed(value: float) -> void:
 	preview_pan_offset.x = value
 	_apply_camera_framing()
+	_request_preview_render()
 
 func _on_pan_y_changed(value: float) -> void:
 	preview_pan_offset.y = value
 	_apply_camera_framing()
+	_request_preview_render()
 
 func _reset_pan_sliders() -> void:
 	if preview_pan_x_slider:
@@ -336,6 +353,7 @@ func _reset_pan_sliders() -> void:
 func _apply_preview_rotation() -> void:
 	if preview_pivot:
 		preview_pivot.rotation_degrees = Vector3(preview_pitch_degrees, preview_yaw_degrees, 0.0)
+	_request_preview_render()
 
 func _update_preview_mesh() -> void:
 	if not preview_mesh or not preview_camera:
@@ -377,6 +395,11 @@ func _apply_camera_framing() -> void:
 	var pan_offset := Vector3(preview_pan_offset.x * pan_range, -preview_pan_offset.y * pan_range, 0.0)
 	preview_camera.position = preview_camera_base_position + pan_offset
 	preview_camera.look_at(preview_camera_target + pan_offset, Vector3.UP)
+	_request_preview_render()
+
+func _request_preview_render() -> void:
+	if preview_viewport and visible:
+		preview_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 func _clear_preview_model() -> void:
 	if preview_model_instance:
@@ -473,6 +496,7 @@ func _on_preview_gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and is_drag_rotating:
 		preview_yaw_degrees += event.relative.x * DRAG_ROTATION_SPEED
 		_apply_preview_rotation()
+		_request_preview_render()
 		preview_viewport_container.accept_event()
 		get_viewport().set_input_as_handled()
 
@@ -540,18 +564,23 @@ func _get_world_camera() -> Camera3D:
 		return null
 	return scene_root.get_node_or_null("CameraPivot/Camera3D") as Camera3D
 
-func _update_panel_layout() -> void:
+func _update_panel_layout() -> bool:
 	if not preview_panel:
-		return
+		return false
 	var viewport_size := get_viewport_rect().size
-	var panel_size := _apply_responsive_preview_size(viewport_size)
 	var scene_root := get_tree().current_scene
 	if not scene_root:
-		return
+		return false
 	var left_panel := scene_root.get_node_or_null("CanvasLayer/Panel") as Control
+	var left_panel_rect := left_panel.get_global_rect() if left_panel else Rect2()
+	if preview_layout_cache_valid and viewport_size == preview_last_viewport_size and left_panel_rect == preview_last_left_panel_rect:
+		return false
+	preview_layout_cache_valid = true
+	preview_last_viewport_size = viewport_size
+	preview_last_left_panel_rect = left_panel_rect
+	var panel_size := _apply_responsive_preview_size(viewport_size)
 	if left_panel:
-		var panel_rect: Rect2 = left_panel.get_global_rect()
-		preview_panel.global_position = Vector2(panel_rect.position.x + panel_rect.size.x + PREVIEW_PANEL_GAP, PREVIEW_PANEL_TOP)
+		preview_panel.global_position = Vector2(left_panel_rect.position.x + left_panel_rect.size.x + PREVIEW_PANEL_GAP, PREVIEW_PANEL_TOP)
 	else:
 		preview_panel.position = Vector2(96.0, PREVIEW_PANEL_TOP)
 	preview_panel.global_position.y = clampf(
@@ -559,6 +588,22 @@ func _update_panel_layout() -> void:
 		PREVIEW_PANEL_TOP,
 		maxf(PREVIEW_PANEL_TOP, viewport_size.y - panel_size.y - PREVIEW_PANEL_BOTTOM_MARGIN)
 	)
+	return true
+
+func _connector_state_changed() -> bool:
+	if not is_instance_valid(current_target):
+		return false
+	var world_camera := _get_world_camera()
+	if not world_camera:
+		return false
+	var target_position := current_target.global_position
+	if connector_cache_valid and world_camera.global_position.distance_squared_to(connector_last_camera_position) < 0.000001 and world_camera.global_rotation.distance_squared_to(connector_last_camera_rotation) < 0.000001 and target_position.distance_squared_to(connector_last_target_position) < 0.000001:
+		return false
+	connector_cache_valid = true
+	connector_last_camera_position = world_camera.global_position
+	connector_last_camera_rotation = world_camera.global_rotation
+	connector_last_target_position = target_position
+	return true
 
 func _apply_responsive_preview_size(viewport_size: Vector2 = Vector2.ZERO) -> Vector2:
 	if viewport_size == Vector2.ZERO:

@@ -23,7 +23,7 @@ enum CameraMode {
 @export var min_camera_world_y: float = 0.0
 
 @export_group("first_person")
-@export var first_person_height: float = 1.2
+@export var first_person_height: float = 1.7
 @export var first_person_enter_dolly_distance: float = 0.0
 @export var first_person_enter_pause_ms: int = 180
 @export var first_person_move_speed: float = 4.0
@@ -177,7 +177,7 @@ func _pan_camera(relative: Vector2) -> void:
 
 	var pan_delta := (-right * relative.x + forward * relative.y) * pan_speed
 	global_position += pan_delta
-	_enforce_camera_limits()
+	_enforce_min_camera_height()
 
 func _update_camera_distance(target_dist: float):
 	if camera:
@@ -235,13 +235,18 @@ func _get_effective_min_distance() -> float:
 func _enforce_camera_limits() -> void:
 	if not camera:
 		return
+	_enforce_min_camera_height()
+	if current_mode != CameraMode.FIRST_PERSON:
+		_apply_camera_collision_to_desired_position()
+
+func _enforce_min_camera_height() -> void:
+	if not camera:
+		return
 	if global_position.y < min_camera_world_y:
 		global_position.y = min_camera_world_y
 	var camera_world_y := camera.global_position.y
 	if camera_world_y < min_camera_world_y:
 		global_position.y += min_camera_world_y - camera_world_y
-	if current_mode != CameraMode.FIRST_PERSON:
-		_apply_camera_collision_to_desired_position()
 
 func _is_preview_consuming_input(event: InputEvent) -> bool:
 	var scene_root := get_tree().current_scene
@@ -300,30 +305,7 @@ func _apply_camera_collision_to_desired_position() -> void:
 	if current_mode == CameraMode.FIRST_PERSON:
 		camera.position = Vector3.ZERO
 		return
-	if current_mode == CameraMode.SIDE:
-		camera.position = desired_camera_local_position
-		return
-	var scene_root := get_tree().current_scene
-	if not scene_root:
-		camera.position = desired_camera_local_position
-		return
-	var world : World3D = scene_root.get_world_3d()
-	if not world:
-		camera.position = desired_camera_local_position
-		return
-	var origin := global_position
-	var target_global := to_global(desired_camera_local_position)
-	var direction := target_global - origin
-	if direction.length() <= 0.0001:
-		camera.position = desired_camera_local_position
-		return
-	var query := PhysicsRayQueryParameters3D.create(origin, target_global)
-	var result := world.direct_space_state.intersect_ray(query)
-	if result.is_empty():
-		camera.position = desired_camera_local_position
-		return
-	var safe_global : Variant= result.position - direction.normalized() * first_person_collision_margin
-	camera.global_position = safe_global
+	camera.position = desired_camera_local_position
 
 func _enter_first_person_mode() -> void:
 	_store_orbit_state()

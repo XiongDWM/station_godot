@@ -207,6 +207,40 @@ const engine = new Engine(GODOT_CONFIG);
 const GODOT_ROOM_ID_KEY = 'godot_selected_room_id';
 
 (function () {
+	let hasUserInteracted = false;
+
+	function markUserInteracted() {
+		hasUserInteracted = true;
+	}
+
+	function isCloseShortcut(event) {
+		return (event.ctrlKey || event.metaKey) && !event.altKey && String(event.key).toLowerCase() === 'w';
+	}
+
+	window.addEventListener('pointerdown', markUserInteracted, { capture: true, passive: true });
+	window.addEventListener('keydown', function (event) {
+		markUserInteracted();
+		if (!isCloseShortcut(event)) {
+			return;
+		}
+		event.preventDefault();
+		event.stopImmediatePropagation();
+		const canvas = document.getElementById('canvas');
+		if (canvas) {
+			canvas.focus();
+		}
+	}, { capture: true });
+	window.addEventListener('beforeunload', function (event) {
+		if (!hasUserInteracted) {
+			return;
+		}
+		event.preventDefault();
+		event.returnValue = '';
+		return '';
+	});
+}());
+
+(function () {
 	const statusOverlay = document.getElementById('status');
 	const statusProgress = document.getElementById('status-progress');
 	const statusNotice = document.getElementById('status-notice');
