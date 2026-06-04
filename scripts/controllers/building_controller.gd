@@ -1,6 +1,7 @@
 extends RefCounted
 
 class_name BuildingController
+const CellLinePlacementScript := preload("res://scripts/controllers/cell_line_placement.gd")
 const WALL_SCENE_PATH := "res://wall_object.tscn"
 const DOOR_SCENE_PATH := "res://door_object.tscn"
 const ODF_SCENE_PATH := "res://odf_object.tscn"
@@ -33,16 +34,18 @@ var current_building := {
 	"collision_size": Vector3.ZERO,
 	"is_placeable": true,
 	"surface_snap_target": null,
+	"cell_line_dragging": false,
 }
 var preview_cache_valid := false
 var preview_last_mouse_pos := Vector2.ZERO
 var preview_last_camera_position := Vector3.ZERO
 var preview_last_camera_rotation := Vector3.ZERO
 
-func initialize(preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, preview_pipe: MeshInstance3D, preview_rack: MeshInstance3D = null) -> void:
+func initialize(preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, preview_pipe: MeshInstance3D, preview_rack: MeshInstance3D = null, preview_floor: MeshInstance3D = null) -> void:
 	_prepare_preview_material(preview_cube)
 	_prepare_preview_material(preview_wall)
 	_prepare_preview_material(preview_rack)
+	_prepare_preview_material(preview_floor)
 	if preview_cube:
 		preview_cube.visible = false
 	if preview_wall:
@@ -51,9 +54,11 @@ func initialize(preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, prev
 		preview_pipe.visible = false
 	if preview_rack:
 		preview_rack.visible = false
+	if preview_floor:
+		preview_floor.visible = false
 
 
-func bind_buttons(btn_cube: Button, btn_rack: Button, btn_wall: Button, btn_door: Button, btn_pipe: Button, btn_trench: Button, block_scene: PackedScene, rack_scene: PackedScene, wall_scene: PackedScene, door_scene: PackedScene, pipe_scene: PackedScene, trench_scene: PackedScene, preview_cube: MeshInstance3D, preview_rack: MeshInstance3D, preview_wall: MeshInstance3D, preview_pipe: MeshInstance3D, target: Object, method: StringName) -> void:
+func bind_buttons(btn_cube: Button, btn_rack: Button, btn_wall: Button, btn_door: Button, btn_floor: Button, btn_pipe: Button, btn_trench: Button, block_scene: PackedScene, rack_scene: PackedScene, wall_scene: PackedScene, door_scene: PackedScene, floor_scene: PackedScene, pipe_scene: PackedScene, trench_scene: PackedScene, preview_cube: MeshInstance3D, preview_rack: MeshInstance3D, preview_wall: MeshInstance3D, preview_floor: MeshInstance3D, preview_pipe: MeshInstance3D, target: Object, method: StringName) -> void:
 	if btn_cube:
 		btn_cube.pressed.connect(Callable(target, method).bind(block_scene, preview_cube, "point"))
 	if btn_rack:
@@ -62,6 +67,8 @@ func bind_buttons(btn_cube: Button, btn_rack: Button, btn_wall: Button, btn_door
 		btn_wall.pressed.connect(Callable(target, method).bind(wall_scene, preview_wall, "point"))
 	if btn_door:
 		btn_door.pressed.connect(Callable(target, method).bind(door_scene, preview_wall, "point"))
+	if btn_floor:
+		btn_floor.pressed.connect(Callable(target, method).bind(floor_scene, preview_floor, "cell_line"))
 	if btn_pipe:
 		btn_pipe.pressed.connect(Callable(target, method).bind(pipe_scene, preview_pipe, "line"))
 	if btn_trench:
@@ -86,7 +93,10 @@ func set_building_mode(scene: PackedScene, preview: MeshInstance3D, operation_pa
 		current_building["collision_size"] = _get_scene_collision_box_size(scene)
 		current_building["is_placeable"] = true
 		current_building["surface_snap_target"] = null
+		current_building["cell_line_dragging"] = false
 		_invalidate_preview_cache()
+		if normalized_mode == "cell_line":
+			_configure_cell_line_preview(preview)
 		if operation_panel:
 			operation_panel.visible = false
 		if module_panel:
@@ -140,6 +150,7 @@ func cancel_build_mode() -> void:
 	current_building["collision_size"] = Vector3.ZERO
 	current_building["is_placeable"] = true
 	current_building["surface_snap_target"] = null
+	current_building["cell_line_dragging"] = false
 	_invalidate_preview_cache()
 	_reset_line_preview()
 
@@ -151,6 +162,9 @@ func handle_preview_logic(root: Node3D, grid_map: GridMap) -> void:
 		return
 	var mouse_pos = root.get_viewport().get_mouse_position()
 	if _should_skip_preview_update(camera, mouse_pos):
+		return
+	if get_placement_mode() == "cell_line":
+		_handle_cell_line_preview_logic(root, grid_map)
 		return
 	if get_placement_mode() == "line":
 		_handle_line_preview_logic(root, grid_map)
@@ -246,6 +260,9 @@ func handle_unhandled_input(root: Node, event: InputEvent) -> bool:
 		root.get_viewport().set_input_as_handled()
 		return true
 
+	if get_placement_mode() == "cell_line":
+		return _handle_cell_line_input(root, event)
+
 	if get_placement_mode() == "line":
 		return false
 
@@ -292,6 +309,8 @@ func handle_unhandled_input(root: Node, event: InputEvent) -> bool:
 	return false
 
 func place_current_building(root: Node3D, grid_map: GridMap) -> void:
+	if get_placement_mode() == "cell_line":
+		return
 	if get_placement_mode() == "line":
 		_place_or_update_line_building(root, grid_map)
 		return
@@ -669,6 +688,235 @@ func _should_center_wall_on_cell() -> bool:
 	var normalized := fposmod(rotation_offset, 90.0)
 	return not is_zero_approx(normalized)
 
+func _handle_cell_line_input(root: Node, event: InputEvent) -> bool:
+	if not current_building["is_active"]:
+		return false
+	var root_3d := root as Node3D
+	if not root_3d:
+		return false
+	var grid_map := root.get_node_or_null("GridMap") as GridMap
+	if not grid_map:
+		return false
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT:
+			var cursor_points: Array[Vector3] = []
+			if not _try_get_cell_line_cursor_position(root_3d, grid_map, cursor_points):
+				return false
+			if mouse_event.pressed:
+				current_building["line_start_point"] = cursor_points[0]
+				current_building["cell_line_dragging"] = true
+				_invalidate_preview_cache()
+				root.get_viewport().set_input_as_handled()
+				return true
+			if bool(current_building.get("cell_line_dragging", false)):
+				var start_point: Variant = current_building.get("line_start_point")
+				if start_point != null:
+					_place_cell_line_units(root_3d, grid_map, current_building["scene"] as PackedScene, start_point as Vector3, cursor_points[0])
+				_reset_line_preview()
+				current_building["cell_line_dragging"] = false
+				root.get_viewport().set_input_as_handled()
+				return true
+		if mouse_event.button_index == MOUSE_BUTTON_RIGHT and mouse_event.pressed and bool(current_building.get("cell_line_dragging", false)):
+			_reset_line_preview()
+			current_building["cell_line_dragging"] = false
+			root.get_viewport().set_input_as_handled()
+			return true
+	return false
+
+func _handle_cell_line_preview_logic(root: Node3D, grid_map: GridMap) -> void:
+	var preview_mesh := current_building["preview"] as MeshInstance3D
+	if not preview_mesh:
+		return
+	var cursor_points: Array[Vector3] = []
+	if not _try_get_cell_line_cursor_position(root, grid_map, cursor_points):
+		preview_mesh.visible = false
+		return
+	var start_point: Variant = current_building.get("line_start_point")
+	var start_vec := cursor_points[0] if start_point == null else start_point as Vector3
+	_update_cell_line_preview(preview_mesh, grid_map, start_vec, cursor_points[0])
+
+func _try_get_cell_line_cursor_position(root: Node3D, grid_map: GridMap, out_points: Array[Vector3]) -> bool:
+	var camera = root.get_node_or_null("CameraPivot/Camera3D") as Camera3D
+	if not camera:
+		return false
+	var mouse_pos = root.get_viewport().get_mouse_position()
+	var ray_origin := camera.project_ray_origin(mouse_pos)
+	var ray_direction := camera.project_ray_normal(mouse_pos)
+	var plane := Plane(Vector3.UP, _get_floor_top_y(grid_map))
+	var hit: Variant = plane.intersects_ray(ray_origin, ray_direction)
+	if hit == null:
+		return false
+	var cell := grid_map.local_to_map(grid_map.to_local(hit as Vector3))
+	cell.y = 0
+	out_points.clear()
+	out_points.append(CellLinePlacementScript.cell_center_world(grid_map, cell, _get_floor_top_y(grid_map)))
+	return true
+
+func _update_cell_line_preview(preview_mesh: MeshInstance3D, grid_map: GridMap, start_point: Vector3, end_point: Vector3) -> void:
+	_configure_cell_line_preview(preview_mesh)
+	var unit_cells := CellLinePlacementScript.get_dominant_axis_cells(grid_map, start_point, end_point)
+	var cells := unit_cells.get("cells", []) as Array
+	if cells.is_empty():
+		preview_mesh.visible = false
+		return
+	var min_x := 999999
+	var max_x := -999999
+	var min_z := 999999
+	var max_z := -999999
+	for cell in cells:
+		var cell_vec := cell as Vector3i
+		min_x = mini(min_x, cell_vec.x)
+		max_x = maxi(max_x, cell_vec.x)
+		min_z = mini(min_z, cell_vec.z)
+		max_z = maxi(max_z, cell_vec.z)
+	var start_cell := Vector3i(min_x, 0, min_z)
+	var end_cell := Vector3i(max_x, 0, max_z)
+	var start_world := grid_map.to_global(grid_map.map_to_local(start_cell))
+	var end_world := grid_map.to_global(grid_map.map_to_local(end_cell))
+	preview_mesh.global_position = (start_world + end_world) * 0.5 + Vector3.UP * 0.012
+	preview_mesh.rotation = Vector3.ZERO
+	preview_mesh.scale = Vector3(
+		(max_x - min_x + 1) * grid_map.cell_size.x,
+		0.024,
+		(max_z - min_z + 1) * grid_map.cell_size.z
+	)
+	preview_mesh.visible = true
+
+func _configure_cell_line_preview(preview_mesh: MeshInstance3D) -> void:
+	if not preview_mesh:
+		return
+	if not bool(preview_mesh.get_meta("cell_line_preview_mesh_ready", false)):
+		var box_mesh := BoxMesh.new()
+		box_mesh.size = Vector3.ONE
+		preview_mesh.mesh = box_mesh
+		preview_mesh.set_meta("cell_line_preview_mesh_ready", true)
+	var material := preview_mesh.get_meta("cell_line_preview_material", null) as Material
+	if not material:
+		var preview_material := StandardMaterial3D.new()
+		preview_material.albedo_color = PREVIEW_VALID_COLOR
+		preview_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		preview_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		preview_mesh.set_meta("cell_line_preview_material", preview_material)
+		material = preview_material
+	preview_mesh.material_override = material
+
+func _place_cell_line_units(root: Node3D, grid_map: GridMap, scene_to_spawn: PackedScene, start_point: Vector3, end_point: Vector3) -> void:
+	if not grid_map or not scene_to_spawn:
+		return
+	var unit_cells := CellLinePlacementScript.get_dominant_axis_cells(grid_map, start_point, end_point)
+	var cells := unit_cells.get("cells", []) as Array
+	var layer := int(current_building.get("view_layer", 0))
+	var placed_count := 0
+	for cell in cells:
+		var cell_vec := cell as Vector3i
+		if _find_existing_cell_line_unit(root, scene_to_spawn.resource_path, cell_vec, layer):
+			continue
+		var new_unit := scene_to_spawn.instantiate()
+		root.add_child(new_unit)
+		if new_unit is Node3D:
+			var unit_node := new_unit as Node3D
+			_sync_floor_unit_with_grid_map(unit_node, grid_map)
+			unit_node.global_transform = Transform3D(Basis.IDENTITY, grid_map.to_global(grid_map.map_to_local(cell_vec)))
+			unit_node.set_meta("cell_line_unit", true)
+			unit_node.set_meta("floor_cell_x", cell_vec.x)
+			unit_node.set_meta("floor_cell_z", cell_vec.z)
+			_ensure_floor_unit_selection_body(unit_node, grid_map, layer, cell_vec)
+			if root.has_method("register_built_floor_cell"):
+				root.call("register_built_floor_cell", cell_vec)
+		if new_unit is Node:
+			(new_unit as Node).set_meta("build_view_layer", layer)
+		placed_count += 1
+	if placed_count > 0:
+		print("连续铺设地板: ", placed_count)
+
+func _find_existing_cell_line_unit(root: Node3D, scene_path: String, cell: Vector3i, layer: int) -> Node3D:
+	for child in root.get_children():
+		if not child is Node3D:
+			continue
+		var node := child as Node3D
+		if node.scene_file_path != scene_path:
+			continue
+		if int(node.get_meta("build_view_layer", 0)) != layer:
+			continue
+		if int(node.get_meta("floor_cell_x", 999999)) == cell.x and int(node.get_meta("floor_cell_z", 999999)) == cell.z:
+			return node
+	return null
+
+func _sync_floor_unit_with_grid_map(unit_node: Node3D, grid_map: GridMap) -> void:
+	if not unit_node or not grid_map or not grid_map.mesh_library:
+		return
+	var grid_mesh := grid_map.mesh_library.get_item_mesh(0)
+	if not grid_mesh:
+		return
+	var mesh_instance := _find_mesh_instance(unit_node)
+	if not mesh_instance:
+		return
+	mesh_instance.mesh = grid_mesh
+	mesh_instance.transform = grid_map.mesh_library.get_item_mesh_transform(0)
+
+func _ensure_floor_unit_selection_body(unit_node: Node3D, grid_map: GridMap, layer: int, cell: Vector3i) -> void:
+	if not unit_node or not grid_map:
+		return
+	var body := unit_node.get_node_or_null("FloorSelectionBody") as StaticBody3D
+	if not body:
+		body = StaticBody3D.new()
+		body.name = "FloorSelectionBody"
+		unit_node.add_child(body)
+	body.set_meta("build_view_layer", layer)
+	body.set_meta("cell_line_unit", true)
+	body.set_meta("floor_cell_x", cell.x)
+	body.set_meta("floor_cell_z", cell.z)
+	body.input_ray_pickable = true
+	body.collision_layer = 1
+	body.collision_mask = 1
+	var collision_shape := body.get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if not collision_shape:
+		collision_shape = CollisionShape3D.new()
+		collision_shape.name = "CollisionShape3D"
+		body.add_child(collision_shape)
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(grid_map.cell_size.x * 0.94, maxf(grid_map.cell_size.y, 0.08), grid_map.cell_size.z * 0.94)
+	collision_shape.shape = shape
+
+func _find_mesh_instance(node: Node) -> MeshInstance3D:
+	if node is MeshInstance3D:
+		return node as MeshInstance3D
+	for child in node.get_children():
+		var found := _find_mesh_instance(child)
+		if found:
+			return found
+	return null
+
+func _get_node_visual_bounds(node: Node) -> AABB:
+	var state := {
+		"has_bounds": false,
+		"bounds": AABB(),
+	}
+	_collect_visual_bounds(node, state)
+	return state["bounds"] if bool(state["has_bounds"]) else AABB()
+
+func _collect_visual_bounds(node: Node, state: Dictionary) -> void:
+	if node is MeshInstance3D:
+		var mesh_instance := node as MeshInstance3D
+		if mesh_instance.mesh:
+			var bounds := _transform_visual_aabb(mesh_instance.global_transform, mesh_instance.mesh.get_aabb())
+			if bool(state["has_bounds"]):
+				state["bounds"] = (state["bounds"] as AABB).merge(bounds)
+			else:
+				state["bounds"] = bounds
+				state["has_bounds"] = true
+	for child in node.get_children():
+		_collect_visual_bounds(child, state)
+
+func _transform_visual_aabb(transform: Transform3D, source: AABB) -> AABB:
+	var result := AABB(transform * source.position, Vector3.ZERO)
+	for x in [0.0, source.size.x]:
+		for y in [0.0, source.size.y]:
+			for z in [0.0, source.size.z]:
+				result = result.expand(transform * (source.position + Vector3(x, y, z)))
+	return result
+
 func _place_or_update_line_building(root: Node3D, grid_map: GridMap) -> void:
 	var scene_to_spawn = _get_effective_line_scene(current_building["scene"] as PackedScene)
 	if not scene_to_spawn:
@@ -703,7 +951,7 @@ func _place_or_update_line_building(root: Node3D, grid_map: GridMap) -> void:
 func _place_trench_units(root: Node3D, grid_map: GridMap, scene_to_spawn: PackedScene, start_point: Vector3, end_point: Vector3) -> void:
 	if not grid_map:
 		return
-	var unit_cells := _get_trench_unit_cells(grid_map, start_point, end_point)
+	var unit_cells := CellLinePlacementScript.get_dominant_axis_cells(grid_map, start_point, end_point)
 	var axis := str(unit_cells.get("axis", "x"))
 	var cells := unit_cells.get("cells", []) as Array
 	var sign := int(unit_cells.get("sign", 1))
@@ -729,27 +977,10 @@ func _place_trench_units(root: Node3D, grid_map: GridMap, scene_to_spawn: Packed
 	_refresh_trench_wall_visibility(root)
 
 func _get_trench_unit_cells(grid_map: GridMap, start_point: Vector3, end_point: Vector3) -> Dictionary:
-	var start_cell := grid_map.local_to_map(grid_map.to_local(start_point))
-	var end_cell := grid_map.local_to_map(grid_map.to_local(end_point))
-	start_cell.y = 0
-	end_cell.y = 0
-	var delta_x := end_cell.x - start_cell.x
-	var delta_z := end_cell.z - start_cell.z
-	var cells: Array[Vector3i] = []
-	if abs(delta_x) >= abs(delta_z):
-		var sign_x := 1 if delta_x >= 0 else -1
-		for x in range(start_cell.x, end_cell.x + sign_x, sign_x):
-			cells.append(Vector3i(x, 0, start_cell.z))
-		return {"axis": "x", "sign": sign_x, "cells": cells}
-	var sign_z := 1 if delta_z >= 0 else -1
-	for z in range(start_cell.z, end_cell.z + sign_z, sign_z):
-		cells.append(Vector3i(start_cell.x, 0, z))
-	return {"axis": "z", "sign": sign_z, "cells": cells}
+	return CellLinePlacementScript.get_dominant_axis_cells(grid_map, start_point, end_point)
 
 func _trench_cell_to_world(grid_map: GridMap, cell: Vector3i) -> Vector3:
-	var world_center := grid_map.to_global(grid_map.map_to_local(cell))
-	world_center.y = _get_current_layer_plane_y()
-	return world_center
+	return CellLinePlacementScript.cell_center_world(grid_map, cell, _get_current_layer_plane_y())
 
 func _find_existing_trench_unit(root: Node3D, cell: Vector3i, axis: String, layer: int) -> Node3D:
 	for child in root.get_children():
@@ -819,7 +1050,7 @@ func _refresh_trench_wall_visibility(root: Node3D) -> void:
 			node.call("set_bottom_span", float(span.x), float(span.y))
 
 func _trench_cell_key(layer: int, cell_x: int, cell_z: int) -> String:
-	return "%d,%d,%d" % [layer, cell_x, cell_z]
+	return CellLinePlacementScript.cell_key(layer, cell_x, cell_z)
 
 func _get_tray_bottom_span(layer: int, cell_x: int, cell_z: int, axis: String, sign: int, x_cells: Dictionary, z_cells: Dictionary) -> Vector2:
 	var has_local_minus := false

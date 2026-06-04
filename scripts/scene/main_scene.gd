@@ -95,6 +95,7 @@ var save_notification_hide_at_msec := 0
 var shadow_toggle_button: Button
 var revealed_floor_cells := {}
 var revealed_floor_overlays := {}
+var built_floor_grid_overlays := {}
 
 func _ready():
 	# print("[MainScene._ready] btn_cube=", btn_cube, ", btn_wall=", btn_wall, ", preview_cube=", preview_cube, ", preview_wall=", preview_wall, ", block_scene=", block_scene, ", wall_scene=", wall_scene)
@@ -106,8 +107,8 @@ func _ready():
 	scene_camera = get_node_or_null("CameraPivot/Camera3D") as Camera3D
 	_apply_scene_shadow_settings()
 	_setup_side_view_layer_planes()
-	building_controller.initialize(preview_cube, preview_wall, runtime_preview_pipe, preview_rack)
-	building_controller.bind_buttons(btn_cube, btn_rack, btn_wall, btn_door, runtime_pipe_button, runtime_trench_button, block_scene, rack_scene, wall_scene, door_scene, pipe_scene, trench_scene, preview_cube, preview_rack, preview_wall, runtime_preview_pipe, self, &"_on_building_mode_selected")
+	building_controller.initialize(preview_cube, preview_wall, runtime_preview_pipe, preview_rack, preview_ac)
+	building_controller.bind_buttons(btn_cube, btn_rack, btn_wall, btn_door, btn_pipe, runtime_pipe_button, runtime_trench_button, block_scene, rack_scene, wall_scene, door_scene, floor_brick_scene, pipe_scene, trench_scene, preview_cube, preview_rack, preview_wall, preview_ac, runtime_preview_pipe, self, &"_on_building_mode_selected")
 	selection_controller.initialize(operation_panel, module_panel)
 	selection_controller.bind_buttons(btn_rotate, btn_delete, self, &"_on_rotate_selected_object", &"_on_delete_selected_object")
 	layout_flow_controller.setup(self, http_request, layout_serializer)
@@ -284,7 +285,7 @@ func _on_rotate_selected_object():
 	selection_controller.rotate_selected_object()
 
 func _on_delete_selected_object():
-	selection_controller.delete_selected_object(operation_panel)
+	selection_controller.delete_selected_object(operation_panel, self)
 
 func _configure_build_toolbar() -> void:
 	_configure_pipe_preview()
@@ -309,6 +310,8 @@ func _configure_build_toolbar() -> void:
 		btn_wall.tooltip_text = "墙体"
 	if btn_door:
 		btn_door.tooltip_text = "单门"
+	if btn_pipe:
+		btn_pipe.tooltip_text = "地板"
 
 func _configure_view_layer_button() -> void:
 	if not runtime_view_layer_button:
@@ -397,7 +400,7 @@ func _enforce_build_mode_for_active_layer() -> void:
 	var placement_mode :Variant= building_controller.get_placement_mode()
 	if active_build_view_layer == 0 and placement_mode == "line":
 		building_controller.cancel_build_mode()
-	elif active_build_view_layer != 0 and placement_mode == "point" and building_controller.is_active():
+	elif active_build_view_layer != 0 and (placement_mode == "point" or placement_mode == "cell_line") and building_controller.is_active():
 		building_controller.cancel_build_mode()
 
 func _apply_scene_layer_visibility() -> void:
@@ -409,6 +412,7 @@ func _apply_scene_layer_visibility() -> void:
 			continue
 		var layer := int(node.get_meta("build_view_layer", 0))
 		node.visible = camera_mode_name == "side" or layer == active_build_view_layer
+	_update_built_floor_grid_overlay_visibility()
 
 func _update_layer_plane_visuals(layer: int) -> void:
 	if grid_map:
@@ -421,6 +425,7 @@ func _update_layer_plane_visuals(layer: int) -> void:
 	if layer != 0:
 		layer_grid_overlay.position.y = _get_view_layer_plane_y(layer) + LAYER_GRID_ELEVATION
 	_update_side_view_layer_plane_visibility()
+	_update_built_floor_grid_overlay_visibility()
 
 func _setup_ground_base() -> void:
 	if ground_base:
@@ -726,7 +731,12 @@ func _toggle_floor_cell_reveal(cell: Vector3i) -> bool:
 	var cell_key := "%d,%d,%d" % [cell.x, cell.y, cell.z]
 	if revealed_floor_cells.has(cell_key):
 		var saved := revealed_floor_cells[cell_key] as Dictionary
-		grid_map.set_cell_item(cell, int(saved.get("item", -1)), int(saved.get("orientation", 0)))
+		if bool(saved.get("built_floor", false)):
+			var built_floor := _find_built_floor_unit_at_cell(cell)
+			if built_floor:
+				built_floor.visible = true
+		else:
+			grid_map.set_cell_item(cell, int(saved.get("item", -1)), int(saved.get("orientation", 0)))
 		revealed_floor_cells.erase(cell_key)
 		_remove_revealed_floor_overlay(cell_key)
 		_refresh_underfloor_visibility()
@@ -734,7 +744,17 @@ func _toggle_floor_cell_reveal(cell: Vector3i) -> bool:
 		return true
 	var item := grid_map.get_cell_item(cell)
 	if item < 0:
-		return false
+		var built_floor := _find_built_floor_unit_at_cell(cell)
+		if not built_floor:
+			return false
+		revealed_floor_cells[cell_key] = {
+			"built_floor": true,
+		}
+		built_floor.visible = false
+		_ensure_revealed_floor_overlay(cell, cell_key)
+		_refresh_underfloor_visibility()
+		_update_layer_plane_visuals(active_build_view_layer)
+		return true
 	var orientation := grid_map.get_cell_item_orientation(cell)
 	revealed_floor_cells[cell_key] = {
 		"item": item,
@@ -745,6 +765,39 @@ func _toggle_floor_cell_reveal(cell: Vector3i) -> bool:
 	_refresh_underfloor_visibility()
 	_update_layer_plane_visuals(active_build_view_layer)
 	return true
+
+func register_built_floor_cell(cell: Vector3i) -> void:
+	_ensure_built_floor_overlay_state()
+	if not grid_map:
+		return
+	cell.y = 0
+	_ensure_built_floor_grid_overlay(cell, 1)
+	_refresh_underfloor_visibility()
+
+func unregister_built_floor_cell(cell: Vector3i) -> void:
+	_ensure_built_floor_overlay_state()
+	cell.y = 0
+	var cell_key := "%d,%d,%d" % [cell.x, cell.y, cell.z]
+	if revealed_floor_cells.has(cell_key):
+		revealed_floor_cells.erase(cell_key)
+		_remove_revealed_floor_overlay(cell_key)
+	_remove_built_floor_grid_overlay(cell, -1)
+	_remove_built_floor_grid_overlay(cell, 0)
+	_remove_built_floor_grid_overlay(cell, 1)
+	_refresh_underfloor_visibility()
+
+func _find_built_floor_unit_at_cell(cell: Vector3i) -> Node3D:
+	for child in get_children():
+		if not child is Node3D:
+			continue
+		var node := child as Node3D
+		if not bool(node.get_meta("cell_line_unit", false)):
+			continue
+		if int(node.get_meta("build_view_layer", 0)) != 0:
+			continue
+		if int(node.get_meta("floor_cell_x", 999999)) == cell.x and int(node.get_meta("floor_cell_z", 999999)) == cell.z:
+			return node
+	return null
 
 
 func _refresh_underfloor_visibility() -> void:
@@ -859,6 +912,59 @@ func _ensure_revealed_floor_overlay(cell: Vector3i, cell_key: String) -> void:
 	revealed_floor_overlays[cell_key] = overlay_root
 	add_child(overlay_root)
 
+func _ensure_built_floor_grid_overlay(cell: Vector3i, layer: int) -> void:
+	_ensure_built_floor_overlay_state()
+	if not grid_map:
+		return
+	var overlay_key := _built_floor_overlay_key(cell, layer)
+	if built_floor_grid_overlays.has(overlay_key):
+		return
+	var overlay_root := Node3D.new()
+	overlay_root.name = "BuiltFloorGridOverlay_%s" % overlay_key.replace(",", "_")
+	var cell_center_global := grid_map.to_global(grid_map.map_to_local(cell))
+	overlay_root.global_position = Vector3(cell_center_global.x, _get_built_floor_overlay_y(layer), cell_center_global.z)
+
+	var grid_overlay := MeshInstance3D.new()
+	grid_overlay.mesh = _build_single_cell_grid_mesh()
+	grid_overlay.position.y = LAYER_GRID_ELEVATION
+	var grid_material := StandardMaterial3D.new()
+	grid_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	grid_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	grid_material.vertex_color_use_as_albedo = true
+	grid_overlay.material_override = grid_material
+	overlay_root.add_child(grid_overlay)
+	overlay_root.set_meta("build_view_layer", layer)
+	overlay_root.visible = camera_mode_name == "side" or layer == active_build_view_layer
+	built_floor_grid_overlays[overlay_key] = overlay_root
+	add_child(overlay_root)
+
+func _update_built_floor_grid_overlay_visibility() -> void:
+	_ensure_built_floor_overlay_state()
+	for overlay_key in built_floor_grid_overlays.keys():
+		var overlay_root := built_floor_grid_overlays[overlay_key] as Node3D
+		if not overlay_root:
+			continue
+		var layer := int(overlay_root.get_meta("build_view_layer", 0))
+		overlay_root.visible = camera_mode_name == "side" or layer == active_build_view_layer
+
+func _remove_built_floor_grid_overlay(cell: Vector3i, layer: int) -> void:
+	_ensure_built_floor_overlay_state()
+	var overlay_key := _built_floor_overlay_key(cell, layer)
+	if not built_floor_grid_overlays.has(overlay_key):
+		return
+	var overlay_root := built_floor_grid_overlays[overlay_key] as Node3D
+	if overlay_root:
+		overlay_root.queue_free()
+	built_floor_grid_overlays.erase(overlay_key)
+
+func _built_floor_overlay_key(cell: Vector3i, layer: int) -> String:
+	return "%d,%d,%d" % [layer, cell.x, cell.z]
+
+func _get_built_floor_overlay_y(layer: int) -> float:
+	if layer == 0 and grid_map:
+		return grid_map.global_position.y + grid_map.cell_size.y
+	return _get_view_layer_plane_y(layer)
+
 func _remove_revealed_floor_overlay(cell_key: String) -> void:
 	_ensure_revealed_floor_state()
 	if not revealed_floor_overlays.has(cell_key):
@@ -873,6 +979,10 @@ func _ensure_revealed_floor_state() -> void:
 		revealed_floor_cells = {}
 	if typeof(revealed_floor_overlays) != TYPE_DICTIONARY:
 		revealed_floor_overlays = {}
+
+func _ensure_built_floor_overlay_state() -> void:
+	if typeof(built_floor_grid_overlays) != TYPE_DICTIONARY:
+		built_floor_grid_overlays = {}
 
 func _build_single_cell_grid_mesh() -> ArrayMesh:
 	if not grid_map:

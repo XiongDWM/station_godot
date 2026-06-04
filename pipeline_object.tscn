@@ -19,8 +19,8 @@ radius = 0.1
 [node name="PipelineObject" type="StaticBody3D" unique_id=2045714415]
 
 [node name="pipe" type="MeshInstance3D" parent="." unique_id=1542226935]
+cast_shadow = 0
 mesh = SubResource("CylinderMesh_pipeline")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=24667457]
 shape = SubResource("CylinderShape3D_pipeline")
-inderShape3D_pipeline")

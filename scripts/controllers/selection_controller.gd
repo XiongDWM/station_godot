@@ -171,6 +171,16 @@ func _is_runtime_interactable(node: Node) -> bool:
 		return false
 	return node_3d.has_meta("build_view_layer")
 
+func _find_operation_target(node: Node) -> Node3D:
+	var current := node
+	while current:
+		if current.has_meta("cell_line_unit") and current.get_parent() is Node3D and current.get_parent().has_meta("cell_line_unit"):
+			return current.get_parent() as Node3D
+		if current is Node3D and _is_runtime_interactable(current):
+			return current as Node3D
+		current = current.get_parent()
+	return null
+
 func handle_right_click_operation(root: Node3D, grid_map: GridMap, preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, preview_pipe: MeshInstance3D, operation_panel: Control) -> void:
 	var camera = root.get_node_or_null("CameraPivot/Camera3D") as Camera3D
 	if not camera:
@@ -193,15 +203,16 @@ func handle_right_click_operation(root: Node3D, grid_map: GridMap, preview_cube:
 		var collider = result.collider as Node3D
 		if collider == grid_map:
 			return
-		if not _is_runtime_interactable(collider):
+		var operation_target := _find_operation_target(collider)
+		if not operation_target:
 			return
-		selected_object = collider
+		selected_object = operation_target
 		last_root = root
 		last_operation_panel = operation_panel
-		_refresh_selected_bounds(collider)
+		_refresh_selected_bounds(operation_target)
 		selection_frame_dirty = true
-		_show_selection_frame(root, collider)
-		show_operation_panel(collider, operation_panel, camera)
+		_show_selection_frame(root, operation_target)
+		show_operation_panel(operation_target, operation_panel, camera)
 
 func toggle_panels_on_right_click(operation_panel: Control, module_panel: Control) -> bool:
 	if operation_panel and operation_panel.visible:
@@ -645,8 +656,11 @@ func rotate_selected_object() -> void:
 		if last_root:
 			_show_selection_frame(last_root, selected_object)
 
-func delete_selected_object(operation_panel: Control) -> void:
+func delete_selected_object(operation_panel: Control, root: Node = null) -> void:
 	if selected_object:
+		if root and selected_object.has_meta("cell_line_unit") and root.has_method("unregister_built_floor_cell"):
+			var cell := Vector3i(int(selected_object.get_meta("floor_cell_x", 0)), 0, int(selected_object.get_meta("floor_cell_z", 0)))
+			root.call("unregister_built_floor_cell", cell)
 		selected_object.queue_free()
 		if operation_panel:
 			operation_panel.visible = false

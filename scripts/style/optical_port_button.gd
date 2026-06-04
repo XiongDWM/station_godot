@@ -24,15 +24,15 @@ const BAD_PORT_MARK_COLOR := Color(0.98, 0.96, 0.96, 0.96)
 var port_shape := PORT_SHAPE_SQUARE
 var port_status := PORT_STATUS_EMPTY
 var is_bad_port := false
-var is_hovered := false
+var is_hovered_bool := false
 
 func _ready() -> void:
 	mouse_entered.connect(func() -> void:
-		is_hovered = true
+		is_hovered_bool = true
 		queue_redraw()
 	)
 	mouse_exited.connect(func() -> void:
-		is_hovered = false
+		is_hovered_bool = false
 		queue_redraw()
 	)
 
@@ -51,7 +51,7 @@ func _draw() -> void:
 func _get_body_color() -> Color:
 	if button_pressed:
 		return BODY_PRESSED_COLOR
-	if is_hovered:
+	if is_hovered_bool:
 		return BODY_HOVER_COLOR
 	return BODY_COLOR
 
