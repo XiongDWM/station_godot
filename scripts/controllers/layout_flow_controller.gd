@@ -164,6 +164,10 @@ func _try_load_cached_layout() -> void:
 func load_layoutdata(json_string: String) -> void:
 	if layout_serializer and root and _has_valid_layout_data(json_string):
 		layout_serializer.deserialize_json_to_scene(json_string, root)
+		if root.has_method("restore_built_floor_cells_from_layout"):
+			root.call("restore_built_floor_cells_from_layout")
+		if root.has_method("rebuild_runtime_scene_indexes"):
+			root.call("rebuild_runtime_scene_indexes")
 		if root.has_method("refresh_build_view_state"):
 			root.call("refresh_build_view_state")
 

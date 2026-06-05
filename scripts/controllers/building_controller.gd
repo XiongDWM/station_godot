@@ -186,12 +186,20 @@ func handle_preview_logic(root: Node3D, grid_map: GridMap) -> void:
 		var query = PhysicsRayQueryParameters3D.create(from, to)
 		var result := space_state.intersect_ray(query)
 		if result.is_empty():
-			var preview_mesh = current_building["preview"] as MeshInstance3D
-			if preview_mesh:
-				preview_mesh.visible = false
-			return
-		hit_result = result
-		cursor_point = result.position
+			var floor_point : Variant = _intersect_point_build_plane(camera, mouse_pos, grid_map)
+			if floor_point == null:
+				var preview_mesh = current_building["preview"] as MeshInstance3D
+				if preview_mesh:
+					preview_mesh.visible = false
+				return
+			cursor_point = floor_point as Vector3
+		else:
+			hit_result = result
+			cursor_point = result.position
+			if _uses_surface_snap() and result.get("collider") != grid_map and not _get_surface_snap_target_node(result.get("collider")):
+				var floor_point : Variant = _intersect_point_build_plane(camera, mouse_pos, grid_map)
+				if floor_point != null:
+					cursor_point = floor_point as Vector3
 
 	var cell_size = grid_map.cell_size
 	var hit_pos = cursor_point
@@ -331,6 +339,8 @@ func place_current_building(root: Node3D, grid_map: GridMap) -> void:
 		(new_building as Node).set_meta("build_view_layer", int(current_building.get("view_layer", 0)))
 		if new_building.has_method("refresh_diagonal_fit"):
 			new_building.call("refresh_diagonal_fit")
+	if new_building is Node3D and root.has_method("register_runtime_layer_node"):
+		root.call("register_runtime_layer_node", new_building as Node3D)
 	_invalidate_preview_cache()
 	print("放置了: ", scene_to_spawn.resource_path)
 
@@ -540,7 +550,7 @@ func _set_preview_validity(preview_mesh: MeshInstance3D, is_valid: bool) -> void
 		return
 	var material_key := "preview_valid_material" if is_valid else "preview_invalid_material"
 	var material := preview_mesh.get_meta(material_key, null) as Material
-	if material:
+	if material and preview_mesh.material_override != material:
 		preview_mesh.material_override = material
 
 func _is_preview_placeable(root: Node3D, preview_mesh: MeshInstance3D) -> bool:
@@ -582,6 +592,8 @@ func _is_overlap_candidate(node: Node) -> bool:
 	if not node_3d.visible:
 		return false
 	if node_3d.scene_file_path.is_empty():
+		return false
+	if bool(node_3d.get_meta("cell_line_unit", false)):
 		return false
 	if node_3d.scene_file_path == DOOR_SCENE_PATH:
 		return false
@@ -755,31 +767,20 @@ func _try_get_cell_line_cursor_position(root: Node3D, grid_map: GridMap, out_poi
 
 func _update_cell_line_preview(preview_mesh: MeshInstance3D, grid_map: GridMap, start_point: Vector3, end_point: Vector3) -> void:
 	_configure_cell_line_preview(preview_mesh)
-	var unit_cells := CellLinePlacementScript.get_dominant_axis_cells(grid_map, start_point, end_point)
-	var cells := unit_cells.get("cells", []) as Array
-	if cells.is_empty():
+	var span := CellLinePlacementScript.get_dominant_axis_span(grid_map, start_point, end_point)
+	if span.is_empty():
 		preview_mesh.visible = false
 		return
-	var min_x := 999999
-	var max_x := -999999
-	var min_z := 999999
-	var max_z := -999999
-	for cell in cells:
-		var cell_vec := cell as Vector3i
-		min_x = mini(min_x, cell_vec.x)
-		max_x = maxi(max_x, cell_vec.x)
-		min_z = mini(min_z, cell_vec.z)
-		max_z = maxi(max_z, cell_vec.z)
-	var start_cell := Vector3i(min_x, 0, min_z)
-	var end_cell := Vector3i(max_x, 0, max_z)
+	var start_cell := span.get("start_cell", Vector3i.ZERO) as Vector3i
+	var end_cell := span.get("end_cell", Vector3i.ZERO) as Vector3i
 	var start_world := grid_map.to_global(grid_map.map_to_local(start_cell))
 	var end_world := grid_map.to_global(grid_map.map_to_local(end_cell))
 	preview_mesh.global_position = (start_world + end_world) * 0.5 + Vector3.UP * 0.012
 	preview_mesh.rotation = Vector3.ZERO
 	preview_mesh.scale = Vector3(
-		(max_x - min_x + 1) * grid_map.cell_size.x,
+		(end_cell.x - start_cell.x + 1) * grid_map.cell_size.x,
 		0.024,
-		(max_z - min_z + 1) * grid_map.cell_size.z
+		(end_cell.z - start_cell.z + 1) * grid_map.cell_size.z
 	)
 	preview_mesh.visible = true
 
@@ -808,9 +809,12 @@ func _place_cell_line_units(root: Node3D, grid_map: GridMap, scene_to_spawn: Pac
 	var cells := unit_cells.get("cells", []) as Array
 	var layer := int(current_building.get("view_layer", 0))
 	var placed_count := 0
+	var placed_cells: Array[Vector3i] = []
+	var existing_cell_keys := _get_existing_cell_line_unit_keys(root, scene_to_spawn.resource_path, layer)
 	for cell in cells:
 		var cell_vec := cell as Vector3i
-		if _find_existing_cell_line_unit(root, scene_to_spawn.resource_path, cell_vec, layer):
+		var cell_key := CellLinePlacementScript.cell_key(layer, cell_vec.x, cell_vec.z)
+		if existing_cell_keys.has(cell_key):
 			continue
 		var new_unit := scene_to_spawn.instantiate()
 		root.add_child(new_unit)
@@ -822,11 +826,21 @@ func _place_cell_line_units(root: Node3D, grid_map: GridMap, scene_to_spawn: Pac
 			unit_node.set_meta("floor_cell_x", cell_vec.x)
 			unit_node.set_meta("floor_cell_z", cell_vec.z)
 			_ensure_floor_unit_selection_body(unit_node, grid_map, layer, cell_vec)
-			if root.has_method("register_built_floor_cell"):
-				root.call("register_built_floor_cell", cell_vec)
+			if root.has_method("register_built_floor_unit"):
+				root.call("register_built_floor_unit", cell_vec, unit_node)
+			placed_cells.append(cell_vec)
 		if new_unit is Node:
 			(new_unit as Node).set_meta("build_view_layer", layer)
+		if new_unit is Node3D and root.has_method("register_runtime_layer_node"):
+			root.call("register_runtime_layer_node", new_unit as Node3D)
 		placed_count += 1
+		existing_cell_keys[cell_key] = true
+	if not placed_cells.is_empty():
+		if root.has_method("register_built_floor_cells"):
+			root.call("register_built_floor_cells", placed_cells)
+		elif root.has_method("register_built_floor_cell"):
+			for placed_cell in placed_cells:
+				root.call("register_built_floor_cell", placed_cell)
 	if placed_count > 0:
 		print("连续铺设地板: ", placed_count)
 
@@ -843,6 +857,23 @@ func _find_existing_cell_line_unit(root: Node3D, scene_path: String, cell: Vecto
 			return node
 	return null
 
+func _get_existing_cell_line_unit_keys(root: Node3D, scene_path: String, layer: int) -> Dictionary:
+	var keys := {}
+	for child in root.get_children():
+		if not child is Node3D:
+			continue
+		var node := child as Node3D
+		if node.scene_file_path != scene_path:
+			continue
+		if int(node.get_meta("build_view_layer", 0)) != layer:
+			continue
+		var cell_x := int(node.get_meta("floor_cell_x", 999999))
+		var cell_z := int(node.get_meta("floor_cell_z", 999999))
+		if cell_x == 999999 or cell_z == 999999:
+			continue
+		keys[CellLinePlacementScript.cell_key(layer, cell_x, cell_z)] = true
+	return keys
+
 func _sync_floor_unit_with_grid_map(unit_node: Node3D, grid_map: GridMap) -> void:
 	if not unit_node or not grid_map or not grid_map.mesh_library:
 		return
@@ -854,6 +885,17 @@ func _sync_floor_unit_with_grid_map(unit_node: Node3D, grid_map: GridMap) -> voi
 		return
 	mesh_instance.mesh = grid_mesh
 	mesh_instance.transform = grid_map.mesh_library.get_item_mesh_transform(0)
+
+func restore_floor_unit(unit_node: Node3D, grid_map: GridMap, layer: int, cell: Vector3i) -> void:
+	if not unit_node or not grid_map:
+		return
+	_sync_floor_unit_with_grid_map(unit_node, grid_map)
+	unit_node.global_transform = Transform3D(Basis.IDENTITY, grid_map.to_global(grid_map.map_to_local(cell)))
+	unit_node.set_meta("build_view_layer", layer)
+	unit_node.set_meta("cell_line_unit", true)
+	unit_node.set_meta("floor_cell_x", cell.x)
+	unit_node.set_meta("floor_cell_z", cell.z)
+	_ensure_floor_unit_selection_body(unit_node, grid_map, layer, cell)
 
 func _ensure_floor_unit_selection_body(unit_node: Node3D, grid_map: GridMap, layer: int, cell: Vector3i) -> void:
 	if not unit_node or not grid_map:
@@ -944,6 +986,8 @@ func _place_or_update_line_building(root: Node3D, grid_map: GridMap) -> void:
 		_apply_line_segment(new_building as Node3D, start_vec, point)
 	if new_building is Node:
 		(new_building as Node).set_meta("build_view_layer", int(current_building.get("view_layer", 0)))
+	if new_building is Node3D and root.has_method("register_runtime_layer_node"):
+		root.call("register_runtime_layer_node", new_building as Node3D)
 	current_building["line_start_point"] = null
 	_reset_line_preview()
 	print("放置了: ", scene_to_spawn.resource_path)
@@ -974,6 +1018,8 @@ func _place_trench_units(root: Node3D, grid_map: GridMap, scene_to_spawn: Packed
 			unit_node.set_meta("trench_cell_z", cell_vec.z)
 		if new_unit is Node:
 			(new_unit as Node).set_meta("build_view_layer", int(current_building.get("view_layer", 0)))
+		if new_unit is Node3D and root.has_method("register_runtime_layer_node"):
+			root.call("register_runtime_layer_node", new_unit as Node3D)
 	_refresh_trench_wall_visibility(root)
 
 func _get_trench_unit_cells(grid_map: GridMap, start_point: Vector3, end_point: Vector3) -> Dictionary:

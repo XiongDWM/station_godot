@@ -91,6 +91,10 @@ func _serialize_node3d(node: Node3D) -> Dictionary:
 			item["type"] = odf_type
 	if node.has_meta("build_view_layer"):
 		item["build_view_layer"] = int(node.get_meta("build_view_layer"))
+	if bool(node.get_meta("cell_line_unit", false)):
+		item["cell_line_unit"] = true
+		item["floor_cell_x"] = int(node.get_meta("floor_cell_x", 0))
+		item["floor_cell_z"] = int(node.get_meta("floor_cell_z", 0))
 	return item
 
 func _clear_scene(root: Node, excluded_group: String) -> void:
@@ -124,6 +128,10 @@ func _instantiate_item(item: Dictionary, root: Node) -> void:
 	if cabinet_id != "":
 		new_instance.set_meta("module_cabinet_id", cabinet_id)
 	new_instance.set_meta("build_view_layer", int(item.get("build_view_layer", 0)))
+	if bool(item.get("cell_line_unit", false)):
+		new_instance.set_meta("cell_line_unit", true)
+		new_instance.set_meta("floor_cell_x", int(item.get("floor_cell_x", 0)))
+		new_instance.set_meta("floor_cell_z", int(item.get("floor_cell_z", 0)))
 	if (item.has("odf_type") or item.has("type")) and item.has("custom_state") and item["custom_state"] is Dictionary:
 		var custom_state := (item["custom_state"] as Dictionary).duplicate(true)
 		var odf_type := int(item.get("odf_type", item.get("type", 0)))

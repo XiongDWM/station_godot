@@ -20,15 +20,15 @@ const BAD_PORT_MARK_COLOR := Color(0.98, 0.96, 0.96, 0.96)
 var is_top_row := true
 var port_status := PORT_STATUS_EMPTY
 var is_bad_port := false
-var is_hovered := false
+var is_hovered_bool := false
 
 func _ready() -> void:
 	mouse_entered.connect(func() -> void:
-		is_hovered = true
+		is_hovered_bool = true
 		queue_redraw()
 	)
 	mouse_exited.connect(func() -> void:
-		is_hovered = false
+		is_hovered_bool = false
 		queue_redraw()
 	)
 
@@ -71,7 +71,7 @@ func _draw() -> void:
 	var socket_color := PORT_SOCKET_BG_COLOR
 	if button_pressed:
 		socket_color = PORT_SOCKET_PRESSED_BG_COLOR
-	elif is_hovered:
+	elif is_hovered_bool:
 		socket_color = PORT_SOCKET_HOVER_BG_COLOR
 	var points := PackedVector2Array()
 	if is_top_row:

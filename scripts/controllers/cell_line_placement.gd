@@ -25,6 +25,25 @@ static func get_dominant_axis_cells_from_cells(start_cell: Vector3i, end_cell: V
 		cells.append(Vector3i(start_cell.x, 0, z))
 	return {"axis": "z", "sign": sign_z, "cells": cells}
 
+static func get_dominant_axis_span(grid_map: GridMap, start_point: Vector3, end_point: Vector3) -> Dictionary:
+	if not grid_map:
+		return {}
+	var start_cell := grid_map.local_to_map(grid_map.to_local(start_point))
+	var end_cell := grid_map.local_to_map(grid_map.to_local(end_point))
+	start_cell.y = 0
+	end_cell.y = 0
+	var delta_x := end_cell.x - start_cell.x
+	var delta_z := end_cell.z - start_cell.z
+	if abs(delta_x) >= abs(delta_z):
+		return {
+			"start_cell": Vector3i(mini(start_cell.x, end_cell.x), 0, start_cell.z),
+			"end_cell": Vector3i(maxi(start_cell.x, end_cell.x), 0, start_cell.z),
+		}
+	return {
+		"start_cell": Vector3i(start_cell.x, 0, mini(start_cell.z, end_cell.z)),
+		"end_cell": Vector3i(start_cell.x, 0, maxi(start_cell.z, end_cell.z)),
+	}
+
 static func cell_center_world(grid_map: GridMap, cell: Vector3i, world_y: float) -> Vector3:
 	var world_center := grid_map.to_global(grid_map.map_to_local(cell))
 	world_center.y = world_y

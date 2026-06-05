@@ -1,8 +1,8 @@
 [gd_scene format=3 uid="uid://r83grn5ubyp0"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_dfp46"]
-albedo_color = Color(0, 0.22658296, 0.24269372, 1)
-metallic = 0.35
+albedo_color = Color(0.6745098, 0.6745098, 0.6745098, 1)
+metallic_specular = 0.34
 metallic_texture_channel = 1
 roughness = 0.4
 roughness_texture_channel = 1

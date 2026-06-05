@@ -492,6 +492,8 @@ func _confirm_move_mode(root: Node3D, operation_panel: Control) -> void:
 	if move_target and is_instance_valid(move_target):
 		selected_object = move_target
 		_refresh_selected_bounds(move_target)
+		if root and root.has_method("refresh_runtime_layer_node"):
+			root.call("refresh_runtime_layer_node", move_target)
 		selection_frame_dirty = true
 		_show_selection_frame(root, move_target)
 		var camera := root.get_node_or_null("CameraPivot/Camera3D") as Camera3D
@@ -506,6 +508,8 @@ func _cancel_move_mode(root: Node3D, operation_panel: Control) -> void:
 		move_target.global_transform = move_original_transform
 		selected_object = move_target
 		_refresh_selected_bounds(move_target)
+		if root and root.has_method("refresh_runtime_layer_node"):
+			root.call("refresh_runtime_layer_node", move_target)
 		selection_frame_dirty = true
 	move_mode_active = false
 	_clear_move_original_frame()
@@ -652,6 +656,8 @@ func rotate_selected_object() -> void:
 		else:
 			selected_object.rotate_y(deg_to_rad(-45))
 		_refresh_selected_bounds(selected_object)
+		if last_root and last_root.has_method("refresh_runtime_layer_node"):
+			last_root.call("refresh_runtime_layer_node", selected_object)
 		selection_frame_dirty = true
 		if last_root:
 			_show_selection_frame(last_root, selected_object)
@@ -661,6 +667,8 @@ func delete_selected_object(operation_panel: Control, root: Node = null) -> void
 		if root and selected_object.has_meta("cell_line_unit") and root.has_method("unregister_built_floor_cell"):
 			var cell := Vector3i(int(selected_object.get_meta("floor_cell_x", 0)), 0, int(selected_object.get_meta("floor_cell_z", 0)))
 			root.call("unregister_built_floor_cell", cell)
+		if root and root.has_method("unregister_runtime_layer_node"):
+			root.call("unregister_runtime_layer_node", selected_object)
 		selected_object.queue_free()
 		if operation_panel:
 			operation_panel.visible = false
