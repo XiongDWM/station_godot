@@ -1,6 +1,6 @@
-[gd_scene load_steps=6 format=3 uid="uid://or551blyscur"]
+[gd_scene format=3 uid="uid://or551blyscur"]
 
-[ext_resource type="Script" path="res://scripts/controllers/trench_controller.gd" id="1_trench_controller"]
+[ext_resource type="Script" uid="uid://cmwqusmlyus6i" path="res://scripts/controllers/trench_controller.gd" id="1_trench_controller"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_trench"]
 albedo_color = Color(0.48, 0.5, 0.52, 1)

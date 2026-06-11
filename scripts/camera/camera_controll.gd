@@ -83,7 +83,7 @@ func _input(event):
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			_handle_zoom_input(zoom_speed)
 
-	var is_mod_pressed = Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_META)
+	var is_mod_pressed = Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_META) or Input.is_key_pressed(KEY_CTRL)
 
 	if event is InputEventMouseMotion:
 		if event.button_mask & MOUSE_BUTTON_MASK_RIGHT and is_mod_pressed:
