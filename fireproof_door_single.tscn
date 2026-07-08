@@ -1,0 +1,14 @@
+[gd_scene format=3 uid="uid://42o1ff2yr3ts"]
+
+[ext_resource type="PackedScene" uid="uid://40l75arrce7v" path="res://assets/models/door/Fireproof_Door-single.fbx" id="1_model"]
+[ext_resource type="Script" uid="uid://bkdsyctvwi3wo" path="res://scripts/controllers/imported_door_wrapper.gd" id="2_wrapper"]
+
+[node name="FireproofDoorSingle" type="StaticBody3D" unique_id=274505756]
+script = ExtResource("2_wrapper")
+panel_node_names = PackedStringArray("dummy001", "box004")
+frame_node_names = PackedStringArray("box001")
+
+[node name="Model" parent="." unique_id=1644562766 instance=ExtResource("1_model")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1.0028937, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1120188164]

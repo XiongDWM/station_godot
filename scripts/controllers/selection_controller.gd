@@ -106,13 +106,13 @@ func update_runtime_visuals(root: Node3D, grid_map: GridMap, operation_panel: Co
 	else:
 		_clear_selection_frame()
 
-func handle_left_click_module(root: Node3D, block_scene: PackedScene, module_panel: Panel) -> void:
+func handle_left_click_module(root: Node3D, block_scene: PackedScene, module_panel: Panel, allow_module_pick: bool = true) -> bool:
 	if not block_scene:
 		push_warning("SelectionController.handle_left_click_module: block_scene is not assigned.")
-		return
+		return false
 	var camera = root.get_node_or_null("CameraPivot/Camera3D") as Camera3D
 	if not camera:
-		return
+		return false
 	var mouse_pos = root.get_viewport().get_mouse_position()
 	var from = camera.project_ray_origin(mouse_pos)
 	var to = from + camera.project_ray_normal(mouse_pos) * 1000.0
@@ -125,7 +125,7 @@ func handle_left_click_module(root: Node3D, block_scene: PackedScene, module_pan
 		if toggle_target:
 			toggle_target.call("toggle_open", camera.global_position)
 			root.get_viewport().set_input_as_handled()
-			return
+			return true
 		var cabinet_target := _find_cabinet_panel_target(collider)
 		if cabinet_target:
 			selected_module_object = collider
@@ -134,12 +134,14 @@ func handle_left_click_module(root: Node3D, block_scene: PackedScene, module_pan
 			_hide_module_panel(module_panel)
 			cabinet_target.call("open_with_panel", module_panel)
 			root.get_viewport().set_input_as_handled()
-			return
-		if collider and collider.scene_file_path == block_scene.resource_path:
+			return true
+		if allow_module_pick and collider and collider.scene_file_path == block_scene.resource_path:
 			selected_module_object = collider
 			_close_opened_cabinet(null)
 			show_module_panel(collider, module_panel)
 			root.get_viewport().set_input_as_handled()
+			return true
+	return false
 
 func _close_opened_cabinet(except_cabinet: Node) -> void:
 	if opened_cabinet and opened_cabinet != except_cabinet and opened_cabinet.has_method("close_cabinet"):
@@ -148,6 +150,9 @@ func _close_opened_cabinet(except_cabinet: Node) -> void:
 		opened_cabinet = null
 
 func _find_toggle_open_target(node: Node) -> Node:
+	var door_wrapper := _find_door_wrapper(node)
+	if door_wrapper and door_wrapper.has_method("toggle_open"):
+		return door_wrapper
 	var current := node
 	while current:
 		if current.has_method("toggle_open") and _is_runtime_interactable(current):
@@ -169,9 +174,30 @@ func _is_runtime_interactable(node: Node) -> bool:
 	var node_3d := node as Node3D
 	if not node_3d.is_visible_in_tree():
 		return false
+	if node_3d.has_meta("door_variant_id"):
+		return true
+	if node_3d is StaticBody3D:
+		var body_script: Variant = (node_3d as StaticBody3D).get_script()
+		if body_script and str(body_script.resource_path).ends_with("imported_door_wrapper.gd"):
+			return node_3d.has_meta("build_view_layer")
 	return node_3d.has_meta("build_view_layer")
 
+func _find_door_wrapper(node: Node) -> Node3D:
+	var current := node
+	while current:
+		if current is StaticBody3D:
+			var body_script: Variant = (current as StaticBody3D).get_script()
+			if body_script and str(body_script.resource_path).ends_with("imported_door_wrapper.gd"):
+				return current as Node3D
+		if current is Node3D and current.has_meta("door_variant_id"):
+			return current as Node3D
+		current = current.get_parent()
+	return null
+
 func _find_operation_target(node: Node) -> Node3D:
+	var door_wrapper := _find_door_wrapper(node)
+	if door_wrapper:
+		return door_wrapper
 	var current := node
 	while current:
 		if current.has_meta("cell_line_unit") and current.get_parent() is Node3D and current.get_parent().has_meta("cell_line_unit"):

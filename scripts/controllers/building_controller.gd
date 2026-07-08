@@ -8,6 +8,8 @@ const ODF_SCENE_PATH := "res://odf_object.tscn"
 const RACK_SCENE_PATH := "res://rack_object.tscn"
 const TRENCH_SCENE_PATH := "res://trench_object.tscn"
 const CEILING_TRAY_SCENE_PATH := "res://ceiling_tray_object.tscn"
+const PIPELINE_SCENE_PATH := "res://pipeline_object.tscn"
+const PIPE_DEFAULT_RADIUS := 0.1
 const COLLISION_BOX_SIZE_META := "collision_box_size"
 const PIPE_PREVIEW_MIN_LENGTH := 0.2
 const SURFACE_SNAP_MARGIN := 0.02
@@ -18,6 +20,12 @@ const PIPE_LAYER_Y := {
 	0: 0.0,
 	1: 2.3,
 }
+
+const DOOR_VARIANTS := [
+	{"id": "single", "label": "单扇防火门", "scene_path": "res://fireproof_door_single.tscn"},
+	{"id": "double", "label": "双扇防火门", "scene_path": "res://fireproof_door_double.tscn"},
+]
+const DOOR_PREVIEW_GROUP := "preview"
 
 var current_building := {
 	"scene": null,
@@ -35,11 +43,17 @@ var current_building := {
 	"is_placeable": true,
 	"surface_snap_target": null,
 	"cell_line_dragging": false,
+	"wall_line_dragging": false,
+	"wall_line_anchor": null,
 }
 var preview_cache_valid := false
 var preview_last_mouse_pos := Vector2.ZERO
 var preview_last_camera_position := Vector3.ZERO
 var preview_last_camera_rotation := Vector3.ZERO
+var door_primary_scene: PackedScene = null
+var door_alt_scene: PackedScene = null
+var current_door_variant_index := 0
+var door_preview_instance: Node3D = null
 
 func initialize(preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, preview_pipe: MeshInstance3D, preview_rack: MeshInstance3D = null, preview_floor: MeshInstance3D = null) -> void:
 	_prepare_preview_material(preview_cube)
@@ -67,12 +81,16 @@ func bind_buttons(btn_cube: Button, btn_rack: Button, btn_wall: Button, btn_door
 		btn_wall.pressed.connect(Callable(target, method).bind(wall_scene, preview_wall, "point"))
 	if btn_door:
 		btn_door.pressed.connect(Callable(target, method).bind(door_scene, preview_wall, "point"))
+	door_primary_scene = door_scene
 	if btn_floor:
 		btn_floor.pressed.connect(Callable(target, method).bind(floor_scene, preview_floor, "cell_line"))
 	if btn_pipe:
-		btn_pipe.pressed.connect(Callable(target, method).bind(pipe_scene, preview_pipe, "line"))
+		btn_pipe.pressed.connect(Callable(target, method).bind(pipe_scene, preview_pipe, "wall_line"))
 	if btn_trench:
 		btn_trench.pressed.connect(Callable(target, method).bind(trench_scene, preview_pipe, "line"))
+
+func set_alternate_door_scene(scene: PackedScene) -> void:
+	door_alt_scene = scene
 
 func set_building_mode(scene: PackedScene, preview: MeshInstance3D, operation_panel: Control, module_panel: Control, placement_mode: String = "point") -> void:
 	var normalized_mode := _normalize_placement_mode(scene, placement_mode)
@@ -94,9 +112,16 @@ func set_building_mode(scene: PackedScene, preview: MeshInstance3D, operation_pa
 		current_building["is_placeable"] = true
 		current_building["surface_snap_target"] = null
 		current_building["cell_line_dragging"] = false
+		current_building["wall_line_dragging"] = false
+		current_building["wall_line_anchor"] = null
 		_invalidate_preview_cache()
 		if normalized_mode == "cell_line":
 			_configure_cell_line_preview(preview)
+		if normalized_mode == "wall_line":
+			_configure_wall_line_preview(preview)
+		if scene and scene.resource_path == DOOR_SCENE_PATH:
+			current_door_variant_index = 0
+			_clear_door_preview_instance()
 		if operation_panel:
 			operation_panel.visible = false
 		if module_panel:
@@ -111,13 +136,25 @@ func set_building_mode(scene: PackedScene, preview: MeshInstance3D, operation_pa
 func _normalize_placement_mode(scene: PackedScene, placement_mode: String) -> String:
 	if scene and scene.resource_path == WALL_SCENE_PATH:
 		return "point"
+	if scene and scene.resource_path == PIPELINE_SCENE_PATH:
+		return "wall_line"
 	return placement_mode
 
 func update_ui() -> void:
 	var preview = current_building["preview"]
 	if preview and preview is MeshInstance3D:
-		preview.visible = current_building["is_active"] and current_building["placement_mode"] == "point"
+		var show_point_preview: bool = current_building["is_active"] and current_building["placement_mode"] == "point"
+		if _is_active_door_building():
+			show_point_preview = false
+		preview.visible = show_point_preview
 		_apply_preview_fit()
+
+func get_door_variant_label() -> String:
+	var variant := _get_door_variant_config()
+	return str(variant.get("label", "门"))
+
+func is_active_door_building() -> bool:
+	return _is_active_door_building()
 
 func is_active() -> bool:
 	return current_building["is_active"]
@@ -131,7 +168,7 @@ func get_placement_mode() -> String:
 func set_active_view_layer(layer: int) -> void:
 	current_building["view_layer"] = layer
 	_invalidate_preview_cache()
-	if get_placement_mode() == "line":
+	if get_placement_mode() == "line" or get_placement_mode() == "wall_line":
 		_reset_line_preview()
 
 func cancel_build_mode() -> void:
@@ -151,6 +188,9 @@ func cancel_build_mode() -> void:
 	current_building["is_placeable"] = true
 	current_building["surface_snap_target"] = null
 	current_building["cell_line_dragging"] = false
+	current_building["wall_line_dragging"] = false
+	current_building["wall_line_anchor"] = null
+	_clear_door_preview_instance()
 	_invalidate_preview_cache()
 	_reset_line_preview()
 
@@ -165,6 +205,9 @@ func handle_preview_logic(root: Node3D, grid_map: GridMap) -> void:
 		return
 	if get_placement_mode() == "cell_line":
 		_handle_cell_line_preview_logic(root, grid_map)
+		return
+	if get_placement_mode() == "wall_line":
+		_handle_wall_line_preview_logic(root, grid_map)
 		return
 	if get_placement_mode() == "line":
 		_handle_line_preview_logic(root, grid_map)
@@ -239,7 +282,14 @@ func handle_preview_logic(root: Node3D, grid_map: GridMap) -> void:
 	var is_placeable := _is_preview_placeable(root, preview_mesh)
 	current_building["is_placeable"] = is_placeable
 	_set_preview_validity(preview_mesh, is_placeable)
-	preview_mesh.visible = true
+	if _is_active_door_building():
+		preview_mesh.visible = false
+		_ensure_door_preview_instance(root)
+		_sync_door_preview_instance(preview_mesh)
+		_set_door_preview_validity(is_placeable)
+	else:
+		_clear_door_preview_instance()
+		preview_mesh.visible = true
 	_apply_preview_fit()
 
 func _handle_line_preview_logic(root: Node3D, grid_map: GridMap) -> void:
@@ -271,8 +321,25 @@ func handle_unhandled_input(root: Node, event: InputEvent) -> bool:
 	if get_placement_mode() == "cell_line":
 		return _handle_cell_line_input(root, event)
 
+	if get_placement_mode() == "wall_line":
+		return _handle_wall_line_input(root, event)
+
 	if get_placement_mode() == "line":
 		return false
+
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == Key.KEY_TAB and current_building["is_active"]:
+		if _is_active_door_building():
+			current_door_variant_index = (current_door_variant_index + 1) % DOOR_VARIANTS.size()
+			_rebuild_door_preview_instance(root)
+			var preview_mesh := current_building.get("preview") as Node3D
+			if preview_mesh:
+				_sync_door_preview_instance(preview_mesh)
+			_invalidate_preview_cache()
+			if root.has_method("update_door_build_tooltip"):
+				root.call("update_door_build_tooltip", get_door_variant_label())
+			print("切换门样式: ", get_door_variant_label())
+			root.get_viewport().set_input_as_handled()
+			return true
 
 	if event is InputEventKey and event.pressed == false and current_building["is_active"] and current_building["preview"]:
 		var preview_mesh = current_building["preview"] as Node3D
@@ -317,7 +384,7 @@ func handle_unhandled_input(root: Node, event: InputEvent) -> bool:
 	return false
 
 func place_current_building(root: Node3D, grid_map: GridMap) -> void:
-	if get_placement_mode() == "cell_line":
+	if get_placement_mode() == "cell_line" or get_placement_mode() == "wall_line":
 		return
 	if get_placement_mode() == "line":
 		_place_or_update_line_building(root, grid_map)
@@ -327,6 +394,9 @@ func place_current_building(root: Node3D, grid_map: GridMap) -> void:
 	if not scene_to_spawn or not preview_node:
 		return
 	if not bool(current_building.get("is_placeable", true)):
+		return
+	if _is_active_door_building():
+		_place_door_building(root, grid_map, preview_node)
 		return
 	var new_building = scene_to_spawn.instantiate()
 	if new_building is Node and _uses_edge_snap():
@@ -595,7 +665,7 @@ func _is_overlap_candidate(node: Node) -> bool:
 		return false
 	if bool(node_3d.get_meta("cell_line_unit", false)):
 		return false
-	if node_3d.scene_file_path == DOOR_SCENE_PATH:
+	if node_3d.scene_file_path == DOOR_SCENE_PATH or _is_placed_door_scene_path(node_3d.scene_file_path):
 		return false
 	return _get_node_collision_box_size(node_3d) != Vector3.ZERO
 
@@ -667,7 +737,7 @@ func _get_surface_snap_target_node(collider: Variant) -> Node3D:
 		return null
 	var current: Node = target
 	while current:
-		if current is Node3D and (current.scene_file_path == WALL_SCENE_PATH or current.scene_file_path == DOOR_SCENE_PATH):
+		if current is Node3D and (_is_wall_or_door_scene_path((current as Node3D).scene_file_path)):
 			return current as Node3D
 		current = current.get_parent()
 	return null
@@ -801,6 +871,231 @@ func _configure_cell_line_preview(preview_mesh: MeshInstance3D) -> void:
 		preview_mesh.set_meta("cell_line_preview_material", preview_material)
 		material = preview_material
 	preview_mesh.material_override = material
+
+func _handle_wall_line_input(root: Node, event: InputEvent) -> bool:
+	if not current_building["is_active"]:
+		return false
+	var root_3d := root as Node3D
+	if not root_3d:
+		return false
+	var grid_map := root.get_node_or_null("GridMap") as GridMap
+	if not grid_map:
+		return false
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT:
+			var cursor_points: Array[Vector3] = []
+			if not _try_get_wall_line_cursor_position(root_3d, grid_map, cursor_points):
+				return false
+			if mouse_event.pressed:
+				current_building["line_start_point"] = cursor_points[0]
+				current_building["wall_line_dragging"] = true
+				_invalidate_preview_cache()
+				root.get_viewport().set_input_as_handled()
+				return true
+			if bool(current_building.get("wall_line_dragging", false)):
+				var start_point: Variant = current_building.get("line_start_point")
+				if start_point != null:
+					_place_wall_line_pipe(root_3d, start_point as Vector3, cursor_points[0])
+				_reset_line_preview()
+				current_building["wall_line_dragging"] = false
+				current_building["wall_line_anchor"] = null
+				root.get_viewport().set_input_as_handled()
+				return true
+		if mouse_event.button_index == MOUSE_BUTTON_RIGHT and mouse_event.pressed and bool(current_building.get("wall_line_dragging", false)):
+			_reset_line_preview()
+			current_building["wall_line_dragging"] = false
+			current_building["wall_line_anchor"] = null
+			root.get_viewport().set_input_as_handled()
+			return true
+	return false
+
+func _handle_wall_line_preview_logic(root: Node3D, grid_map: GridMap) -> void:
+	var preview_mesh := current_building["preview"] as MeshInstance3D
+	if not preview_mesh:
+		return
+	var cursor_points: Array[Vector3] = []
+	if not _try_get_wall_line_cursor_position(root, grid_map, cursor_points):
+		preview_mesh.visible = false
+		return
+	var start_point: Variant = current_building.get("line_start_point")
+	if start_point == null:
+		preview_mesh.visible = false
+		return
+	var anchor: Variant = current_building.get("wall_line_anchor")
+	if anchor == null:
+		preview_mesh.visible = false
+		return
+	_update_wall_line_preview(preview_mesh, start_point as Vector3, cursor_points[0], anchor as Dictionary)
+
+func _try_get_wall_line_cursor_position(root: Node3D, grid_map: GridMap, out_points: Array[Vector3]) -> bool:
+	var anchor_data := _resolve_wall_line_anchor(root, grid_map)
+	if anchor_data.is_empty():
+		return false
+	if not bool(current_building.get("wall_line_dragging", false)):
+		current_building["wall_line_anchor"] = anchor_data
+	var projected: Variant = _project_wall_line_point_from_camera(root, grid_map, anchor_data)
+	if projected == null:
+		return false
+	out_points.clear()
+	out_points.append(projected)
+	return true
+
+func _resolve_wall_line_anchor(root: Node3D, grid_map: GridMap) -> Dictionary:
+	if bool(current_building.get("wall_line_dragging", false)):
+		var existing: Variant = current_building.get("wall_line_anchor")
+		if existing is Dictionary:
+			return existing as Dictionary
+	var wall_hit := _raycast_wall_surface(root)
+	if not wall_hit.is_empty():
+		return _wall_hit_to_anchor(wall_hit)
+	return _try_build_wall_line_anchor_from_grid(root, grid_map)
+
+func _try_build_wall_line_anchor_from_grid(root: Node3D, grid_map: GridMap) -> Dictionary:
+	var camera := root.get_node_or_null("CameraPivot/Camera3D") as Camera3D
+	if not camera or not grid_map:
+		return {}
+	var floor_point : Variant = _intersect_point_build_plane(camera, root.get_viewport().get_mouse_position(), grid_map)
+	if floor_point == null:
+		return {}
+	var local_pos := grid_map.to_local(floor_point as Vector3)
+	var cell_size := grid_map.cell_size
+	var map_coord := Vector3i(
+		floori(local_pos.x / cell_size.x),
+		0,
+		floori(local_pos.z / cell_size.z)
+	)
+	var cell_center := grid_map.map_to_local(map_coord)
+	var edge_index := _resolve_wall_edge_index(local_pos, cell_center, cell_size)
+	var edge_offset := _get_wall_edge_offset(cell_size, edge_index, PIPE_DEFAULT_RADIUS * 2.0)
+	var surface_global := grid_map.to_global(cell_center + edge_offset)
+	return {
+		"surface_x": surface_global.x,
+		"surface_z": surface_global.z,
+		"normal": _wall_edge_index_to_normal(edge_index),
+	}
+
+func _wall_edge_index_to_normal(edge_index: int) -> Vector3:
+	match posmod(edge_index, 4):
+		0:
+			return Vector3.RIGHT
+		1:
+			return Vector3.BACK
+		2:
+			return Vector3.LEFT
+		_:
+			return Vector3.FORWARD
+
+func _raycast_wall_surface(root: Node3D) -> Dictionary:
+	var camera := root.get_node_or_null("CameraPivot/Camera3D") as Camera3D
+	if not camera:
+		return {}
+	var mouse_pos := root.get_viewport().get_mouse_position()
+	var from := camera.project_ray_origin(mouse_pos)
+	var to := from + camera.project_ray_normal(mouse_pos) * 100.0
+	var space_state := root.get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	var result := space_state.intersect_ray(query)
+	if result.is_empty():
+		return {}
+	if _get_surface_snap_target_node(result.get("collider")) == null:
+		return {}
+	return result
+
+func _wall_hit_to_anchor(wall_hit: Dictionary) -> Dictionary:
+	var hit_position: Vector3 = wall_hit.get("position", Vector3.ZERO)
+	var hit_normal: Vector3 = wall_hit.get("normal", Vector3.UP)
+	var horizontal_normal := Vector3(hit_normal.x, 0.0, hit_normal.z)
+	if horizontal_normal.length_squared() < 0.0001:
+		horizontal_normal = Vector3.FORWARD
+	else:
+		horizontal_normal = horizontal_normal.normalized()
+	return {
+		"surface_x": hit_position.x,
+		"surface_z": hit_position.z,
+		"normal": horizontal_normal,
+	}
+
+func _anchor_to_wall_pipe_point(anchor: Dictionary, grid_map: GridMap, hit_position: Vector3) -> Vector3:
+	var horizontal_normal: Vector3 = anchor.get("normal", Vector3.FORWARD)
+	var surface_x := float(anchor.get("surface_x", hit_position.x))
+	var surface_z := float(anchor.get("surface_z", hit_position.z))
+	var snapped_y := _snap_wall_line_y(hit_position.y, grid_map)
+	var surface_point := Vector3(surface_x, snapped_y, surface_z)
+	return surface_point + horizontal_normal * PIPE_DEFAULT_RADIUS
+
+func _project_wall_line_point_from_camera(root: Node3D, grid_map: GridMap, anchor: Dictionary) -> Variant:
+	var camera := root.get_node_or_null("CameraPivot/Camera3D") as Camera3D
+	if not camera:
+		return null
+	var horizontal_normal: Vector3 = anchor.get("normal", Vector3.FORWARD)
+	var surface_x := float(anchor.get("surface_x", 0.0))
+	var surface_z := float(anchor.get("surface_z", 0.0))
+	var anchor_point := Vector3(surface_x, 0.0, surface_z)
+	var plane := Plane(horizontal_normal, anchor_point)
+	var mouse_pos := root.get_viewport().get_mouse_position()
+	var hit: Variant = plane.intersects_ray(camera.project_ray_origin(mouse_pos), camera.project_ray_normal(mouse_pos))
+	if hit == null:
+		return null
+	var snapped_y := _snap_wall_line_y((hit as Vector3).y, grid_map)
+	return Vector3(surface_x, snapped_y, surface_z) + horizontal_normal * PIPE_DEFAULT_RADIUS
+
+func _snap_wall_line_y(y: float, grid_map: GridMap) -> float:
+	var base_y := _get_floor_top_y(grid_map)
+	var step := maxf(grid_map.cell_size.y, 0.25)
+	return base_y + round((y - base_y) / step) * step
+
+func _update_wall_line_preview(preview_mesh: MeshInstance3D, start_point: Vector3, end_point: Vector3, anchor: Dictionary) -> void:
+	_configure_wall_line_preview(preview_mesh)
+	_apply_vertical_wall_pipe_segment(preview_mesh, start_point, end_point, anchor.get("normal", Vector3.FORWARD) as Vector3)
+	preview_mesh.visible = true
+
+func _configure_wall_line_preview(preview_mesh: MeshInstance3D) -> void:
+	if not preview_mesh:
+		return
+	_prepare_preview_material(preview_mesh)
+	if preview_mesh.mesh == null or not (preview_mesh.mesh is CylinderMesh):
+		var cylinder_mesh := CylinderMesh.new()
+		cylinder_mesh.top_radius = PIPE_DEFAULT_RADIUS
+		cylinder_mesh.bottom_radius = PIPE_DEFAULT_RADIUS
+		cylinder_mesh.height = 1.0
+		preview_mesh.mesh = cylinder_mesh
+
+func _apply_vertical_wall_pipe_segment(target: Node3D, start_point: Vector3, end_point: Vector3, wall_normal: Vector3) -> void:
+	var y0 := minf(start_point.y, end_point.y)
+	var y1 := maxf(start_point.y, end_point.y)
+	var segment_length := maxf(y1 - y0, PIPE_PREVIEW_MIN_LENGTH)
+	var center_y := (y0 + y1) * 0.5
+	var horizontal_normal := Vector3(wall_normal.x, 0.0, wall_normal.z)
+	if horizontal_normal.length_squared() < 0.0001:
+		horizontal_normal = Vector3.FORWARD
+	else:
+		horizontal_normal = horizontal_normal.normalized()
+	var anchor_x := start_point.x - horizontal_normal.x * PIPE_DEFAULT_RADIUS
+	var anchor_z := start_point.z - horizontal_normal.z * PIPE_DEFAULT_RADIUS
+	target.global_position = Vector3(anchor_x, center_y, anchor_z) + horizontal_normal * PIPE_DEFAULT_RADIUS
+	target.global_rotation = Vector3.ZERO
+	target.scale = Vector3(1.0, segment_length, 1.0)
+
+func _place_wall_line_pipe(root: Node3D, start_point: Vector3, end_point: Vector3) -> void:
+	var scene_to_spawn := current_building["scene"] as PackedScene
+	if not scene_to_spawn:
+		return
+	if start_point.distance_to(end_point) < 0.05:
+		return
+	var anchor: Variant = current_building.get("wall_line_anchor")
+	if not anchor is Dictionary:
+		return
+	var new_building := scene_to_spawn.instantiate()
+	root.add_child(new_building)
+	if new_building is Node3D:
+		_apply_vertical_wall_pipe_segment(new_building as Node3D, start_point, end_point, anchor.get("normal", Vector3.FORWARD))
+	if new_building is Node:
+		(new_building as Node).set_meta("build_view_layer", int(current_building.get("view_layer", 0)))
+		(new_building as Node).set_meta("wall_line_pipe", true)
+	if new_building is Node3D and root.has_method("register_runtime_layer_node"):
+		root.call("register_runtime_layer_node", new_building as Node3D)
+	print("放置了: ", scene_to_spawn.resource_path)
 
 func _place_cell_line_units(root: Node3D, grid_map: GridMap, scene_to_spawn: PackedScene, start_point: Vector3, end_point: Vector3) -> void:
 	if not grid_map or not scene_to_spawn:
@@ -992,13 +1287,162 @@ func _place_or_update_line_building(root: Node3D, grid_map: GridMap) -> void:
 	_reset_line_preview()
 	print("放置了: ", scene_to_spawn.resource_path)
 
+func _try_attach_hinges_to_door(node: Node) -> void:
+	if not node:
+		return
+	# Load the hinge script once
+	var hinge_script := load("res://scripts/controllers/hinged_door_panel.gd")
+	# Attach to MeshInstance3D children that look like door panels
+	for child in node.get_children():
+		if child is MeshInstance3D:
+			var lname := child.name.to_lower()
+			if lname.find("door") != -1 or lname.find("panel") != -1 or lname.find("leaf") != -1:
+				child.set_script(hinge_script)
+				# ensure the mesh can be interacted with at runtime
+				child.set_meta("build_view_layer", int(current_building.get("view_layer", 0)))
+				if child is CollisionObject3D:
+					(child as CollisionObject3D).input_ray_pickable = true
+				else:
+					# try to add a simple StaticBody pickable child if needed
+					var body = child.get_node_or_null("_door_pick_body") as StaticBody3D
+					if not body:
+						body = StaticBody3D.new()
+						body.name = "_door_pick_body"
+						child.add_child(body)
+						body.owner = child.owner
+						body.input_ray_pickable = true
+		# recurse
+		_try_attach_hinges_to_door(child)
+
+func _is_active_door_building() -> bool:
+	if not current_building["is_active"]:
+		return false
+	var scene := current_building["scene"] as PackedScene
+	return scene != null and scene.resource_path == DOOR_SCENE_PATH
+
+func _get_door_variant_config() -> Dictionary:
+	if DOOR_VARIANTS.is_empty():
+		return {}
+	var index := clampi(current_door_variant_index, 0, DOOR_VARIANTS.size() - 1)
+	return DOOR_VARIANTS[index]
+
+func _get_door_variant_scene() -> PackedScene:
+	var variant := _get_door_variant_config()
+	var scene_path := str(variant.get("scene_path", ""))
+	if scene_path == "":
+		return null
+	return load(scene_path) as PackedScene
+
+func _is_door_scene_path(scene_path: String) -> bool:
+	if scene_path == DOOR_SCENE_PATH:
+		return true
+	for variant in DOOR_VARIANTS:
+		if scene_path == str(variant.get("scene_path", "")):
+			return true
+	return false
+
+func _is_placed_door_scene_path(scene_path: String) -> bool:
+	for variant in DOOR_VARIANTS:
+		if scene_path == str(variant.get("scene_path", "")):
+			return true
+	return false
+
+func _is_wall_or_door_scene_path(scene_path: String) -> bool:
+	return scene_path == WALL_SCENE_PATH or _is_placed_door_scene_path(scene_path)
+
+func _clear_door_preview_instance() -> void:
+	if door_preview_instance and is_instance_valid(door_preview_instance):
+		door_preview_instance.queue_free()
+	door_preview_instance = null
+
+func _ensure_door_preview_instance(root: Node3D) -> void:
+	if door_preview_instance and is_instance_valid(door_preview_instance):
+		return
+	_rebuild_door_preview_instance(root)
+
+func _rebuild_door_preview_instance(root: Node3D) -> void:
+	_clear_door_preview_instance()
+	var scene := _get_door_variant_scene()
+	if not scene or not root:
+		return
+	var instance := scene.instantiate()
+	if not instance is Node3D:
+		instance.queue_free()
+		return
+	door_preview_instance = instance as Node3D
+	root.add_child(door_preview_instance)
+	if not door_preview_instance.is_in_group(DOOR_PREVIEW_GROUP):
+		door_preview_instance.add_to_group(DOOR_PREVIEW_GROUP)
+	_disable_door_preview_physics(door_preview_instance)
+	_set_door_preview_validity(bool(current_building.get("is_placeable", true)))
+
+func _sync_door_preview_instance(preview_mesh: Node3D) -> void:
+	if not door_preview_instance or not preview_mesh:
+		return
+	door_preview_instance.global_transform = preview_mesh.global_transform
+	if door_preview_instance.has_method("refresh_diagonal_fit"):
+		door_preview_instance.call("refresh_diagonal_fit")
+
+func _disable_door_preview_physics(node: Node) -> void:
+	if node is CollisionObject3D:
+		var collision_object := node as CollisionObject3D
+		collision_object.collision_layer = 0
+		collision_object.collision_mask = 0
+		collision_object.input_ray_pickable = false
+	for child in node.get_children():
+		_disable_door_preview_physics(child)
+
+func _set_door_preview_validity(is_valid: bool) -> void:
+	if not door_preview_instance:
+		return
+	var color := PREVIEW_VALID_COLOR if is_valid else PREVIEW_INVALID_COLOR
+	_apply_preview_tint_recursive(door_preview_instance, color)
+
+func _apply_preview_tint_recursive(node: Node, color: Color) -> void:
+	if node is MeshInstance3D:
+		var mesh_instance := node as MeshInstance3D
+		var material := StandardMaterial3D.new()
+		material.albedo_color = color
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mesh_instance.material_override = material
+	for child in node.get_children():
+		_apply_preview_tint_recursive(child, color)
+
+func _place_door_building(root: Node3D, grid_map: GridMap, preview_node: Node3D) -> void:
+	var scene_to_spawn := _get_door_variant_scene()
+	if not scene_to_spawn or not preview_node:
+		return
+	var new_building := scene_to_spawn.instantiate()
+	if not new_building:
+		return
+	if new_building is Node:
+		var variant := _get_door_variant_config()
+		(new_building as Node).set_meta("build_view_layer", int(current_building.get("view_layer", 0)))
+		(new_building as Node).set_meta("door_variant_id", str(variant.get("id", "single")))
+		(new_building as Node).set_meta("logical_length_scale", _get_wall_length_scale(grid_map.cell_size))
+	root.add_child(new_building)
+	if new_building is Node3D:
+		(new_building as Node3D).global_transform = preview_node.global_transform
+	var snap_target := current_building.get("surface_snap_target", null) as Node
+	if snap_target and new_building is Node:
+		(new_building as Node).set_meta("host_wall_path", snap_target.get_path())
+	if new_building.has_method("finalize_after_placement"):
+		new_building.call_deferred("finalize_after_placement")
+	elif new_building.has_method("refresh_diagonal_fit"):
+		new_building.call("refresh_diagonal_fit")
+	if new_building is Node3D and root.has_method("register_runtime_layer_node"):
+		root.call("register_runtime_layer_node", new_building as Node3D)
+	_invalidate_preview_cache()
+	print("放置了: ", scene_to_spawn.resource_path, " (", get_door_variant_label(), ")")
+
 func _place_trench_units(root: Node3D, grid_map: GridMap, scene_to_spawn: PackedScene, start_point: Vector3, end_point: Vector3) -> void:
 	if not grid_map:
 		return
 	var unit_cells := CellLinePlacementScript.get_dominant_axis_cells(grid_map, start_point, end_point)
 	var axis := str(unit_cells.get("axis", "x"))
 	var cells := unit_cells.get("cells", []) as Array
-	var sign := int(unit_cells.get("sign", 1))
+	var axis_sign := int(unit_cells.get("sign", 1))
 	for cell in cells:
 		var cell_vec := cell as Vector3i
 		if _find_existing_trench_unit(root, cell_vec, axis, int(current_building.get("view_layer", 0))):
@@ -1008,12 +1452,12 @@ func _place_trench_units(root: Node3D, grid_map: GridMap, scene_to_spawn: Packed
 		if new_unit is Node3D:
 			var unit_node := new_unit as Node3D
 			var center := _trench_cell_to_world(grid_map, cell_vec)
-			var direction := Vector3.RIGHT * float(sign) if axis == "x" else Vector3.BACK * float(sign)
+			var direction := Vector3.RIGHT * float(axis_sign) if axis == "x" else Vector3.BACK * float(axis_sign)
 			var length := grid_map.cell_size.x if axis == "x" else grid_map.cell_size.z
 			_apply_line_segment(unit_node, center - direction * length * 0.5, center + direction * length * 0.5)
 			unit_node.set_meta("trench_unit", true)
 			unit_node.set_meta("trench_axis", axis)
-			unit_node.set_meta("trench_sign", sign)
+			unit_node.set_meta("trench_sign", axis_sign)
 			unit_node.set_meta("trench_cell_x", cell_vec.x)
 			unit_node.set_meta("trench_cell_z", cell_vec.z)
 		if new_unit is Node:
@@ -1066,14 +1510,14 @@ func _refresh_trench_wall_visibility(root: Node3D) -> void:
 		var cell_x := int(node.get_meta("trench_cell_x", 0))
 		var cell_z := int(node.get_meta("trench_cell_z", 0))
 		var axis := str(node.get_meta("trench_axis", ""))
-		var sign := int(node.get_meta("trench_sign", 1))
+		var axis_sign := int(node.get_meta("trench_sign", 1))
 		var left_visible := true
 		var right_visible := true
 		if axis == "x":
 			var has_crossing_z := z_cells.has(_trench_cell_key(layer, cell_x, cell_z))
 			var open_plus_z := has_crossing_z and z_cells.has(_trench_cell_key(layer, cell_x, cell_z + 1))
 			var open_minus_z := has_crossing_z and z_cells.has(_trench_cell_key(layer, cell_x, cell_z - 1))
-			if sign >= 0:
+			if axis_sign >= 0:
 				left_visible = not open_plus_z
 				right_visible = not open_minus_z
 			else:
@@ -1083,7 +1527,7 @@ func _refresh_trench_wall_visibility(root: Node3D) -> void:
 			var has_crossing_x := x_cells.has(_trench_cell_key(layer, cell_x, cell_z))
 			var open_plus_x := has_crossing_x and x_cells.has(_trench_cell_key(layer, cell_x + 1, cell_z))
 			var open_minus_x := has_crossing_x and x_cells.has(_trench_cell_key(layer, cell_x - 1, cell_z))
-			if sign >= 0:
+			if axis_sign >= 0:
 				left_visible = not open_minus_x
 				right_visible = not open_plus_x
 			else:
@@ -1092,21 +1536,21 @@ func _refresh_trench_wall_visibility(root: Node3D) -> void:
 		if node.has_method("set_side_walls"):
 			node.call("set_side_walls", left_visible, right_visible)
 		if node.scene_file_path == CEILING_TRAY_SCENE_PATH and node.has_method("set_bottom_span"):
-			var span := _get_tray_bottom_span(layer, cell_x, cell_z, axis, sign, x_cells, z_cells)
+			var span := _get_tray_bottom_span(layer, cell_x, cell_z, axis, axis_sign, x_cells, z_cells)
 			node.call("set_bottom_span", float(span.x), float(span.y))
 
 func _trench_cell_key(layer: int, cell_x: int, cell_z: int) -> String:
 	return CellLinePlacementScript.cell_key(layer, cell_x, cell_z)
 
-func _get_tray_bottom_span(layer: int, cell_x: int, cell_z: int, axis: String, sign: int, x_cells: Dictionary, z_cells: Dictionary) -> Vector2:
+func _get_tray_bottom_span(layer: int, cell_x: int, cell_z: int, axis: String, axis_sign: int, x_cells: Dictionary, z_cells: Dictionary) -> Vector2:
 	var has_local_minus := false
 	var has_local_plus := false
 	if axis == "x":
-		has_local_minus = x_cells.has(_trench_cell_key(layer, cell_x - sign, cell_z))
-		has_local_plus = x_cells.has(_trench_cell_key(layer, cell_x + sign, cell_z))
+		has_local_minus = x_cells.has(_trench_cell_key(layer, cell_x - axis_sign, cell_z))
+		has_local_plus = x_cells.has(_trench_cell_key(layer, cell_x + axis_sign, cell_z))
 	elif axis == "z":
-		has_local_minus = z_cells.has(_trench_cell_key(layer, cell_x, cell_z - sign))
-		has_local_plus = z_cells.has(_trench_cell_key(layer, cell_x, cell_z + sign))
+		has_local_minus = z_cells.has(_trench_cell_key(layer, cell_x, cell_z - axis_sign))
+		has_local_plus = z_cells.has(_trench_cell_key(layer, cell_x, cell_z + axis_sign))
 	if has_local_minus and not has_local_plus:
 		return Vector2(0.0, 0.5)
 	if has_local_plus and not has_local_minus:
@@ -1147,9 +1591,9 @@ func _snap_line_point(point: Vector3, grid_map: GridMap) -> Vector3:
 	if scene and scene.resource_path == TRENCH_SCENE_PATH:
 		var cell := grid_map.local_to_map(grid_map.to_local(point))
 		cell.y = 0
-		var snapped := grid_map.to_global(grid_map.map_to_local(cell))
-		snapped.y = _get_current_layer_plane_y()
-		return snapped
+		var snapped_point := grid_map.to_global(grid_map.map_to_local(cell))
+		snapped_point.y = _get_current_layer_plane_y()
+		return snapped_point
 	var step_x := maxf(0.25, grid_map.cell_size.x * 0.5)
 	var step_z := maxf(0.25, grid_map.cell_size.z * 0.5)
 	return Vector3(
@@ -1190,6 +1634,8 @@ func _get_line_vertical_offset() -> float:
 
 func _reset_line_preview() -> void:
 	current_building["line_start_point"] = null
+	current_building["wall_line_dragging"] = false
+	current_building["wall_line_anchor"] = null
 	var preview = current_building.get("preview") as MeshInstance3D
 	if preview:
 		preview.visible = false

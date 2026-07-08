@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3 uid="uid://c8door_double_wrap"]
+
+[ext_resource type="PackedScene" uid="uid://y20g3t60x6g7" path="res://assets/models/door/fireproof_door-double_door.fbx" id="1_model"]
+[ext_resource type="Script" path="res://scripts/controllers/imported_door_wrapper.gd" id="2_wrapper"]
+
+[node name="FireproofDoorDouble" type="StaticBody3D"]
+script = ExtResource("2_wrapper")
+door_variant_id = "double"
+panel_node_names = PackedStringArray("dummy001", "dummy002", "box003", "box004")
+frame_node_names = PackedStringArray("box001")
+
+[node name="Model" parent="." instance=ExtResource("1_model")]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]

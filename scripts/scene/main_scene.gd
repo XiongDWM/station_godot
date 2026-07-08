@@ -57,9 +57,11 @@ const VIEW_LAYER_Y := {
 @export var http_request:HTTPRequest
 @export var btn_door: Button
 @export var door_scene: PackedScene
+@export var btn_pipeline: Button
+@export var door_alt_scene: PackedScene
 @export var floor_brick_scene: PackedScene
 @export var preview_ac: MeshInstance3D
-@export var btn_pipe: Button
+@export var btn_floor: Button
 @export var btn_view_layer: Button
 @export var preview_pipe: MeshInstance3D
 @export var pipe_scene: PackedScene
@@ -117,7 +119,10 @@ func _ready():
 	_apply_scene_shadow_settings()
 	_setup_side_view_layer_planes()
 	building_controller.initialize(preview_cube, preview_wall, runtime_preview_pipe, preview_rack, preview_ac)
-	building_controller.bind_buttons(btn_cube, btn_rack, btn_wall, btn_door, btn_pipe, runtime_pipe_button, runtime_trench_button, block_scene, rack_scene, wall_scene, door_scene, floor_brick_scene, pipe_scene, trench_scene, preview_cube, preview_rack, preview_wall, preview_ac, runtime_preview_pipe, self, &"_on_building_mode_selected")
+	building_controller.bind_buttons(btn_cube, btn_rack, btn_wall, btn_door, btn_floor, runtime_pipe_button, runtime_trench_button, block_scene, rack_scene, wall_scene, door_scene, floor_brick_scene, pipe_scene, trench_scene, preview_cube, preview_rack, preview_wall, preview_ac, runtime_preview_pipe, self, &"_on_building_mode_selected")
+	if btn_pipeline:
+		btn_pipeline.pressed.connect(_on_building_mode_selected.bind(pipe_scene, runtime_preview_pipe, "wall_line"))
+	building_controller.set_alternate_door_scene(door_alt_scene)
 	selection_controller.initialize(operation_panel, module_panel)
 	selection_controller.bind_buttons(btn_rotate, btn_delete, self, &"_on_rotate_selected_object", &"_on_delete_selected_object")
 	layout_flow_controller.setup(self, http_request, layout_serializer)
@@ -155,6 +160,12 @@ func _on_building_mode_selected(scene: PackedScene, preview: MeshInstance3D, pla
 	# print("[MainScene._on_building_mode_selected] scene=", scene, ", preview=", preview)
 	_configure_runtime_line_preview(scene, preview)
 	building_controller.set_building_mode(scene, preview, operation_panel, module_panel, placement_mode)
+	if scene and scene.resource_path == "res://door_object.tscn":
+		update_door_build_tooltip(building_controller.get_door_variant_label())
+
+func update_door_build_tooltip(variant_label: String) -> void:
+	if btn_door:
+		btn_door.tooltip_text = "门 (%s) · Tab切换" % variant_label
 
 func _process(_delta):
 	_update_ground_base_position()
@@ -192,8 +203,8 @@ func _unhandled_input(event):
 			if building_controller.is_active():
 				building_controller.place_current_building(self, grid_map)
 				return
-			if active_build_view_layer == 0:
-				selection_controller.handle_left_click_module(self, block_scene, module_panel)
+			if selection_controller.handle_left_click_module(self, block_scene, module_panel, active_build_view_layer == 0):
+				return
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			if selection_controller.toggle_panels_on_right_click(operation_panel, module_panel):
 				return
@@ -306,7 +317,7 @@ func _configure_build_toolbar() -> void:
 	for layer in BUILD_VIEW_ORDER:
 		layer_button_icons[layer] = _build_layer_view_icon(layer)
 	if runtime_pipe_button:
-		runtime_pipe_button.tooltip_text = "绘制管线"
+		runtime_pipe_button.tooltip_text = "贴墙竖管"
 		runtime_pipe_button.icon = pipe_button_icon
 		runtime_pipe_button.expand_icon = true
 	if runtime_trench_button:
@@ -318,9 +329,13 @@ func _configure_build_toolbar() -> void:
 	if btn_wall:
 		btn_wall.tooltip_text = "墙体"
 	if btn_door:
-		btn_door.tooltip_text = "单门"
-	if btn_pipe:
-		btn_pipe.tooltip_text = "地板"
+		btn_door.tooltip_text = "门 (单扇防火门) · Tab切换"
+	if btn_floor:
+		btn_floor.tooltip_text = "地板"
+	if btn_pipeline:
+		btn_pipeline.tooltip_text = "贴墙竖管"
+		btn_pipeline.icon = pipe_button_icon
+		btn_pipeline.expand_icon = true
 
 func _configure_view_layer_button() -> void:
 	if not runtime_view_layer_button:
@@ -391,12 +406,14 @@ func _update_build_toolbar_for_layer(layer: int) -> void:
 		btn_wall.visible = not pipeline_layer
 	if btn_door:
 		btn_door.visible = not pipeline_layer
-	if btn_pipe:
-		btn_pipe.visible = not pipeline_layer
+	if btn_floor:
+		btn_floor.visible = not pipeline_layer
+	if btn_pipeline:
+		btn_pipeline.visible = true
 	if btn_view_layer:
 		btn_view_layer.visible = not pipeline_layer
 	if runtime_pipe_button:
-		runtime_pipe_button.visible = pipeline_layer
+		runtime_pipe_button.visible = false
 	if runtime_trench_button:
 		runtime_trench_button.visible = pipeline_layer
 	if runtime_view_layer_button:

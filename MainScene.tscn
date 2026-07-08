@@ -52,7 +52,7 @@ size = Vector3(0.8, 2, 0.8)
 material = SubResource("StandardMaterial3D_x4av3")
 size = Vector3(1, 2, 0.2)
 
-[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "btn_cube", "btn_rack", "btn_wall", "preview_cube", "preview_rack", "preview_wall", "module_panel", "operation_panel", "btn_rotate", "btn_delete", "btn_save", "left_menu_panel", "build_panel", "http_request", "btn_door", "preview_ac", "btn_pipe", "btn_view_layer", "preview_pipe", "runtime_pipe_button", "runtime_trench_button", "runtime_view_layer_button")]
+[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "btn_cube", "btn_rack", "btn_wall", "preview_cube", "preview_rack", "preview_wall", "module_panel", "operation_panel", "btn_rotate", "btn_delete", "btn_save", "left_menu_panel", "build_panel", "http_request", "btn_door", "btn_pipeline", "preview_ac", "btn_floor", "btn_view_layer", "preview_pipe", "runtime_pipe_button", "runtime_trench_button", "runtime_view_layer_button")]
 script = ExtResource("1_rf2cd")
 ground_base_color = Color(0.7019608, 0.7411765, 0.78039217, 1)
 grid_map = NodePath("GridMap")
@@ -75,9 +75,10 @@ build_panel = NodePath("CanvasLayer/BuildPanel")
 http_request = NodePath("HTTPRequest")
 btn_door = NodePath("CanvasLayer/BuildPanel/btn_door")
 door_scene = ExtResource("4_5crlr")
+btn_pipeline = NodePath("CanvasLayer/BuildPanel/btn_pipeline")
 floor_brick_scene = ExtResource("5_hbc2u")
 preview_ac = NodePath("PreviewAC")
-btn_pipe = NodePath("CanvasLayer/BuildPanel/btn_floor")
+btn_floor = NodePath("CanvasLayer/BuildPanel/btn_floor")
 btn_view_layer = NodePath("CanvasLayer/BuildPanel/btn_ac")
 preview_pipe = NodePath("PreviewAC")
 pipe_scene = ExtResource("4_pipe_scene")
@@ -444,10 +445,20 @@ expand_icon = true
 
 [node name="btn_ac" type="Button" parent="CanvasLayer/BuildPanel" unique_id=1071660490]
 layout_mode = 0
-offset_left = 50.088814
-offset_top = 2.566776
-offset_right = 58.088814
-offset_bottom = 10.566776
+offset_left = 63.69676
+offset_top = 3.3368042
+offset_right = 72.38268
+offset_bottom = 11.336804
+
+[node name="btn_pipeline" type="Button" parent="CanvasLayer/BuildPanel" unique_id=542771064]
+layout_mode = 0
+offset_left = 50.0
+offset_top = 2.823452
+offset_right = 186.0
+offset_bottom = 138.82346
+scale = Vector2(0.06182063, 0.05689597)
+tooltip_text = "贴墙竖管"
+expand_icon = true
 
 [node name="btn_runtime_pipe" type="Button" parent="CanvasLayer/BuildPanel" unique_id=1270783067]
 layout_mode = 0

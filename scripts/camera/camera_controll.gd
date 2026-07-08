@@ -6,6 +6,8 @@ enum CameraMode {
 	SIDE,
 }
 
+const SOLID_COLLISION_LAYER := 1
+
 @export_group("operation_sensitivity")
 @export var rotate_speed: float = 0.006
 @export var pan_speed: float = 0.05
@@ -294,6 +296,7 @@ func _move_first_person_with_collision(from_position: Vector3, to_position: Vect
 	if direction.length() <= 0.0001:
 		return from_position
 	var query := PhysicsRayQueryParameters3D.create(from_position, to_position)
+	query.collision_mask = SOLID_COLLISION_LAYER
 	var result := world.direct_space_state.intersect_ray(query)
 	if result.is_empty():
 		return to_position

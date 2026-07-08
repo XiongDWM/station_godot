@@ -1,0 +1,3 @@
+[gd_scene format=3 uid="uid://dmv63q18gdj5u"]
+
+[node name="PipeObject" type="StaticBody3D" unique_id=1521393288]

@@ -1,6 +1,6 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene format=3 uid="uid://bvhyx46ylkpue"]
 
-[ext_resource type="Script" path="res://scripts/controllers/trench_controller.gd" id="1_trench_controller"]
+[ext_resource type="Script" uid="uid://cmwqusmlyus6i" path="res://scripts/controllers/trench_controller.gd" id="1_trench_controller"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ceiling_tray"]
 albedo_color = Color(0.78, 0.8, 0.82, 1)
@@ -10,7 +10,7 @@ roughness = 0.24
 
 [sub_resource type="BoxMesh" id="BoxMesh_ceiling_tray_bottom"]
 material = SubResource("StandardMaterial3D_ceiling_tray")
-size = Vector3(0.52, 1, 0.01)
+size = Vector3(0.5, 1, 0.01)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ceiling_tray_side"]
 material = SubResource("StandardMaterial3D_ceiling_tray")
@@ -19,20 +19,20 @@ size = Vector3(0.01, 1, 0.1)
 [sub_resource type="BoxShape3D" id="BoxShape3D_ceiling_tray"]
 size = Vector3(0.52, 1, 0.11)
 
-[node name="CeilingTrayObject" type="StaticBody3D"]
+[node name="CeilingTrayObject" type="StaticBody3D" unique_id=665216150]
 script = ExtResource("1_trench_controller")
 
-[node name="Bottom" type="MeshInstance3D" parent="."]
-position = Vector3(0, 0, 0.005)
+[node name="Bottom" type="MeshInstance3D" parent="." unique_id=1772612072]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.005)
 mesh = SubResource("BoxMesh_ceiling_tray_bottom")
 
-[node name="LeftWall" type="MeshInstance3D" parent="."]
-position = Vector3(-0.255, 0, 0.055)
+[node name="LeftWall" type="MeshInstance3D" parent="." unique_id=1606012257]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.255, 0, 0.055)
 mesh = SubResource("BoxMesh_ceiling_tray_side")
 
-[node name="RightWall" type="MeshInstance3D" parent="."]
-position = Vector3(0.255, 0, 0.055)
+[node name="RightWall" type="MeshInstance3D" parent="." unique_id=1336945782]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.255, 0, 0.055)
 mesh = SubResource("BoxMesh_ceiling_tray_side")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=756852942]
 shape = SubResource("BoxShape3D_ceiling_tray")

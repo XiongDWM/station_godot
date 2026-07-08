@@ -59,6 +59,12 @@ func deserialize_items_to_scene(data: Array, root: Node, excluded_group: String 
 	_clear_scene(root, excluded_group)
 	for item in data:
 		_instantiate_item(item, root)
+	call_deferred("_finalize_deserialized_nodes", root)
+
+func _finalize_deserialized_nodes(root: Node) -> void:
+	for child in root.get_children():
+		if child.has_method("finalize_serialized_state"):
+			child.call("finalize_serialized_state")
 
 func _serialize_node3d(node: Node3D) -> Dictionary:
 	var global_xform = node.global_transform
