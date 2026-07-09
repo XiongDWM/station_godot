@@ -4,6 +4,7 @@ enum CameraMode {
 	ORBIT,
 	FIRST_PERSON,
 	SIDE,
+	BUILDING_OVERVIEW,
 }
 
 const SOLID_COLLISION_LAYER := 1
@@ -20,6 +21,12 @@ const SOLID_COLLISION_LAYER := 1
 @export var min_distance: float = 0.02
 @export var default_distance: float = 12.0
 @export var max_orbit_distance: float = 22.0
+@export var top_down_pitch_threshold_deg: float = -55.0
+@export var top_down_max_distance_multiplier: float = 2.0
+@export var building_overview_pitch_deg: float = -88.0
+@export var building_overview_distance_multiplier: float = 1.8
+@export var building_overview_max_distance_multiplier: float = 2.5
+@export var building_overview_enter_zoom_buffer: float = 2.5
 @export var min_pitch_deg: float = -75.0
 @export var max_pitch_deg: float = -10.0
 @export var min_camera_world_y: float = 0.0
@@ -53,6 +60,7 @@ var stored_orbit_distance: float = 0.0
 var stored_orbit_dolly: float = 0.0
 var first_person_zoom_limit_reached_at_msec: int = -1
 var side_view_zoom_buffer_progress: float = 0.0
+var building_overview_zoom_buffer_progress: float = 0.0
 
 func _ready():
 	if camera:
@@ -107,13 +115,29 @@ func _handle_zoom_input(zoom_step: float) -> void:
 					first_person_zoom_limit_reached_at_msec = now
 			elif not zoom_changed and zoom_step > 0.0:
 				first_person_zoom_limit_reached_at_msec = -1
-				side_view_zoom_buffer_progress += zoom_step
-				if side_view_zoom_buffer_progress >= maxf(side_view_enter_zoom_buffer, zoom_speed):
+				if _should_offer_building_overview():
+					building_overview_zoom_buffer_progress += zoom_step
 					side_view_zoom_buffer_progress = 0.0
-					_enter_side_view_mode()
+					if building_overview_zoom_buffer_progress >= maxf(building_overview_enter_zoom_buffer, zoom_speed):
+						building_overview_zoom_buffer_progress = 0.0
+						_enter_building_overview_mode()
+				else:
+					building_overview_zoom_buffer_progress = 0.0
+					side_view_zoom_buffer_progress += zoom_step
+					if side_view_zoom_buffer_progress >= maxf(side_view_enter_zoom_buffer, zoom_speed):
+						side_view_zoom_buffer_progress = 0.0
+						_enter_side_view_mode()
 			else:
 				first_person_zoom_limit_reached_at_msec = -1
 				side_view_zoom_buffer_progress = 0.0
+				building_overview_zoom_buffer_progress = 0.0
+		CameraMode.BUILDING_OVERVIEW:
+			if zoom_step > 0.0:
+				_zoom_camera(zoom_step)
+			elif zoom_step < 0.0:
+				var zoom_changed := _zoom_camera(zoom_step)
+				if not zoom_changed or camera.position.length() <= maxf(stored_orbit_distance, default_distance) * 0.9:
+					_exit_building_overview_mode()
 		CameraMode.FIRST_PERSON:
 			if zoom_step > 0.0:
 				_exit_first_person_mode()
@@ -127,6 +151,8 @@ func _rotate_active_camera(relative: Vector2) -> void:
 			_rotate_first_person(relative)
 		CameraMode.SIDE:
 			_rotate_side_view(relative)
+		CameraMode.BUILDING_OVERVIEW:
+			_rotate_camera(relative)
 		_:
 			_rotate_camera(relative)
 
@@ -153,7 +179,7 @@ func _rotate_first_person(relative: Vector2) -> void:
 		deg_to_rad(first_person_max_pitch_deg)
 	)
 	rotation.x = current_pitch
-	global_position.y = first_person_height
+	global_position.y = _get_first_person_world_y()
 
 func _rotate_side_view(relative: Vector2) -> void:
 	rotate_y(-relative.x * rotate_speed)
@@ -205,7 +231,7 @@ func _zoom_camera(zoom_step: float) -> bool:
 	var clamped_distance: float = clamp(
 		current_distance + remaining_zoom_step,
 		_get_effective_min_distance(),
-		current_max_distance
+		_get_orbit_zoom_max_distance()
 	)
 	var applied_distance_change: float = clamped_distance - current_distance
 	changed = changed or not is_zero_approx(applied_distance_change)
@@ -233,6 +259,24 @@ func _apply_dolly(amount: float) -> bool:
 
 func _get_effective_min_distance() -> float:
 	return maxf(min_distance, 0.05)
+
+func _get_building_overview_distance_hint() -> float:
+	var fallback := max_orbit_distance * top_down_max_distance_multiplier * building_overview_distance_multiplier
+	var scene_root := get_tree().current_scene
+	if scene_root and scene_root.has_method("get_building_overview_camera_state"):
+		var state = scene_root.call("get_building_overview_camera_state", global_position, fallback)
+		if state is Dictionary:
+			return maxf(float(state.get("distance", fallback)), fallback)
+	return fallback
+
+func _get_orbit_zoom_max_distance() -> float:
+	if current_mode == CameraMode.BUILDING_OVERVIEW:
+		return _get_building_overview_distance_hint() * building_overview_max_distance_multiplier
+	if current_mode != CameraMode.ORBIT:
+		return max_orbit_distance
+	if rad_to_deg(current_pitch) <= top_down_pitch_threshold_deg:
+		return max_orbit_distance * top_down_max_distance_multiplier
+	return max_orbit_distance
 
 func _enforce_camera_limits() -> void:
 	if not camera:
@@ -281,9 +325,9 @@ func _update_first_person_movement(delta: float) -> void:
 		return
 	var move_direction := (right * movement_input.x + forward * movement_input.y).normalized()
 	var target_position := global_position + move_direction * first_person_move_speed * delta
-	target_position.y = first_person_height
+	target_position.y = _get_first_person_world_y()
 	global_position = _move_first_person_with_collision(global_position, target_position)
-	global_position.y = first_person_height
+	global_position.y = _get_first_person_world_y()
 
 func _move_first_person_with_collision(from_position: Vector3, to_position: Vector3) -> Vector3:
 	var scene_root := get_tree().current_scene
@@ -319,7 +363,7 @@ func _enter_first_person_mode() -> void:
 	current_pitch = 0.0
 	rotation.x = 0.0
 	global_position = _get_default_first_person_position(global_position)
-	global_position.y = first_person_height
+	global_position.y = _get_first_person_world_y()
 	desired_camera_local_position = Vector3.ZERO
 	camera.position = Vector3.ZERO
 	_notify_scene_mode_changed()
@@ -336,6 +380,49 @@ func _exit_first_person_mode() -> void:
 	zoom_direction = desired_camera_local_position.normalized()
 	_apply_camera_collision_to_desired_position()
 	_notify_scene_mode_changed()
+
+func _should_offer_building_overview() -> bool:
+	return rad_to_deg(current_pitch) <= top_down_pitch_threshold_deg
+
+func _enter_building_overview_mode() -> void:
+	_store_orbit_state()
+	current_mode = CameraMode.BUILDING_OVERVIEW
+	first_person_zoom_limit_reached_at_msec = -1
+	side_view_zoom_buffer_progress = 0.0
+	building_overview_zoom_buffer_progress = 0.0
+	var overview_state := _get_building_overview_state()
+	current_pitch = deg_to_rad(building_overview_pitch_deg)
+	rotation.x = current_pitch
+	global_position = overview_state.get("focus", global_position)
+	current_zoom_dolly_distance = 0.0
+	var overview_distance := float(overview_state.get("distance", max_orbit_distance * top_down_max_distance_multiplier))
+	desired_camera_local_position = Vector3(0.0, 0.0, overview_distance)
+	zoom_direction = Vector3.FORWARD
+	_apply_camera_collision_to_desired_position()
+	_notify_scene_mode_changed()
+
+func _exit_building_overview_mode() -> void:
+	current_mode = CameraMode.ORBIT
+	first_person_zoom_limit_reached_at_msec = -1
+	side_view_zoom_buffer_progress = 0.0
+	building_overview_zoom_buffer_progress = 0.0
+	current_pitch = stored_orbit_pitch
+	rotation.x = current_pitch
+	rotation.y = stored_orbit_yaw
+	current_zoom_dolly_distance = 0.0
+	desired_camera_local_position = Vector3(0.0, 0.0, maxf(stored_orbit_distance, 1.5))
+	zoom_direction = desired_camera_local_position.normalized()
+	_apply_camera_collision_to_desired_position()
+	_notify_scene_mode_changed()
+
+func _get_building_overview_state() -> Dictionary:
+	var fallback_distance := max_orbit_distance * top_down_max_distance_multiplier * building_overview_distance_multiplier
+	var scene_root := get_tree().current_scene
+	if scene_root and scene_root.has_method("get_building_overview_camera_state"):
+		var state = scene_root.call("get_building_overview_camera_state", global_position, fallback_distance)
+		if state is Dictionary:
+			return state
+	return {"focus": global_position, "distance": fallback_distance}
 
 func _enter_side_view_mode() -> void:
 	_store_orbit_state()
@@ -380,7 +467,13 @@ func _get_default_first_person_position(fallback: Vector3) -> Vector3:
 	var scene_root := get_tree().current_scene
 	if scene_root and scene_root.has_method("get_default_first_person_position"):
 		return scene_root.call("get_default_first_person_position", fallback)
-	return Vector3(fallback.x, first_person_height, fallback.z)
+	return Vector3(fallback.x, _get_first_person_world_y(), fallback.z)
+
+func _get_first_person_world_y() -> float:
+	var scene_root := get_tree().current_scene
+	if scene_root and scene_root.has_method("get_first_person_world_y"):
+		return float(scene_root.call("get_first_person_world_y", first_person_height))
+	return first_person_height
 
 func _get_default_side_view_focus_position(fallback: Vector3) -> Vector3:
 	var scene_root := get_tree().current_scene
@@ -399,5 +492,7 @@ func get_camera_mode_name() -> String:
 			return "first_person"
 		CameraMode.SIDE:
 			return "side"
+		CameraMode.BUILDING_OVERVIEW:
+			return "building_overview"
 		_:
 			return "orbit"

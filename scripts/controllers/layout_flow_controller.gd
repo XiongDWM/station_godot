@@ -43,8 +43,11 @@ func save_layoutdata() -> String:
 	if not root or not layout_serializer:
 		return ""
 	_ensure_layout_node_ids()
-	var layout_data_array = layout_serializer.serialize_scene(root)
-	var json_string = JSON.stringify(layout_data_array, "  ")
+	var layout_meta := {}
+	if root.has_method("get_layout_scene_meta"):
+		layout_meta = root.call("get_layout_scene_meta")
+	var layout_document = layout_serializer.serialize_scene_document(root, layout_meta)
+	var json_string = JSON.stringify(layout_document, "  ")
 	print("布局数据:\n", json_string)
 	var app_state = _get_app_state()
 	if app_state and app_state.has_method("get_station_id"):

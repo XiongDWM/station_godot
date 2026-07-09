@@ -50,9 +50,9 @@ size = Vector3(0.8, 2, 0.8)
 
 [sub_resource type="BoxMesh" id="BoxMesh_uxrcv"]
 material = SubResource("StandardMaterial3D_x4av3")
-size = Vector3(1, 2, 0.2)
+size = Vector3(1, 2.5, 0.2)
 
-[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "btn_cube", "btn_rack", "btn_wall", "preview_cube", "preview_rack", "preview_wall", "module_panel", "operation_panel", "btn_rotate", "btn_delete", "btn_save", "left_menu_panel", "build_panel", "http_request", "btn_door", "btn_pipeline", "preview_ac", "btn_floor", "btn_view_layer", "preview_pipe", "runtime_pipe_button", "runtime_trench_button", "runtime_view_layer_button")]
+[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "btn_cube", "btn_rack", "btn_wall", "preview_cube", "preview_rack", "preview_wall", "module_panel", "operation_panel", "btn_rotate", "btn_delete", "btn_save", "story_count_spin", "story_count_save_button", "story_level_button", "left_menu_panel", "build_panel", "http_request", "btn_door", "btn_pipeline", "preview_ac", "btn_floor", "btn_view_layer", "preview_pipe", "runtime_pipe_button", "runtime_trench_button", "runtime_view_layer_button")]
 script = ExtResource("1_rf2cd")
 ground_base_color = Color(0.7019608, 0.7411765, 0.78039217, 1)
 grid_map = NodePath("GridMap")
@@ -70,6 +70,9 @@ operation_panel = NodePath("CanvasLayer/ControllPanel")
 btn_rotate = NodePath("CanvasLayer/ControllPanel/btn_rotate")
 btn_delete = NodePath("CanvasLayer/ControllPanel/btn_delete")
 btn_save = NodePath("CanvasLayer/Panel/btn_save")
+story_count_spin = NodePath("CanvasLayer/Panel/StoryControlsColumn/StoryCountRow/StoryCountSpin")
+story_count_save_button = NodePath("CanvasLayer/Panel/StoryControlsColumn/StoryCountRow/StoryCountSaveButton")
+story_level_button = NodePath("CanvasLayer/Panel/StoryControlsColumn/StoryLevelButton")
 left_menu_panel = NodePath("CanvasLayer/Panel")
 build_panel = NodePath("CanvasLayer/BuildPanel")
 http_request = NodePath("HTTPRequest")
@@ -163,6 +166,47 @@ offset_top = 84.703094
 offset_right = 96.86859
 offset_bottom = 136.7031
 scale = Vector2(0.34, 0.395)
+
+[node name="StoryControlsColumn" type="VBoxContainer" parent="CanvasLayer/Panel"]
+layout_mode = 0
+offset_left = 0.868592
+offset_top = 137.703094
+offset_right = 96.86859
+offset_bottom = 173.369427
+scale = Vector2(0.34, 0.395)
+theme_override_constants/separation = 1
+
+[node name="StoryCountRow" type="HBoxContainer" parent="CanvasLayer/Panel/StoryControlsColumn"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 2
+
+[node name="StoryCountSpin" type="SpinBox" parent="CanvasLayer/Panel/StoryControlsColumn/StoryCountRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+theme_override_font_sizes/font_size = 9
+min_value = 1.0
+max_value = 99.0
+step = 1.0
+rounded = true
+alignment = 1
+value = 3.0
+tooltip_text = "输入大楼总层数"
+
+[node name="StoryCountSaveButton" type="Button" parent="CanvasLayer/Panel/StoryControlsColumn/StoryCountRow"]
+custom_minimum_size = Vector2(22, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 9
+text = "存"
+tooltip_text = "保存总层数到场景"
+
+[node name="StoryLevelButton" type="Button" parent="CanvasLayer/Panel/StoryControlsColumn"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_font_sizes/font_size = 9
+text = "L1/3"
+tooltip_text = "切换当前建造楼层"
 
 [node name="ModulePanel" type="Panel" parent="CanvasLayer" unique_id=252016293]
 anchors_preset = -1

@@ -2,12 +2,51 @@ extends RefCounted
 
 class_name LayoutSerializer
 
+const DEFAULT_BUILDING_STORY_COUNT := 3
+
 func serialize_scene(root: Node, excluded_group: String = "preview") -> Array:
 	var layout_items: Array = []
 	for child in root.get_children():
 		if _is_serializable_scene_root(child, excluded_group):
 			layout_items.append(_serialize_node3d(child as Node3D))
 	return layout_items
+
+func serialize_scene_document(root: Node, scene_meta: Dictionary = {}, excluded_group: String = "preview") -> Dictionary:
+	return {
+		"version": 2,
+		"building_story_count": int(scene_meta.get("building_story_count", DEFAULT_BUILDING_STORY_COUNT)),
+		"items": serialize_scene(root, excluded_group),
+	}
+
+func parse_layout_document(json_string: String) -> Dictionary:
+	var normalized := json_string.strip_edges()
+	if normalized == "":
+		return {"ok": false, "message": "layout 为空字符串"}
+	var json := JSON.new()
+	if json.parse(normalized) != OK:
+		return {"ok": false, "message": "layout JSON 解析失败"}
+	if json.data is Array:
+		return {
+			"ok": true,
+			"items": json.data,
+			"meta": {},
+			"message": "legacy layout array",
+		}
+	if json.data is Dictionary:
+		var document := json.data as Dictionary
+		var items :Variant= document.get("items", [])
+		if not items is Array:
+			return {"ok": false, "message": "layout.items 不是数组"}
+		var meta := {
+			"building_story_count": int(document.get("building_story_count", DEFAULT_BUILDING_STORY_COUNT)),
+		}
+		return {
+			"ok": true,
+			"items": items,
+			"meta": meta,
+			"message": "layout document",
+		}
+	return {"ok": false, "message": "layout 根节点格式错误"}
 
 func serialize_scene_to_json(root: Node, excluded_group: String = "preview", indent: String = "  ") -> String:
 	return JSON.stringify(serialize_scene(root, excluded_group), indent)
@@ -22,38 +61,40 @@ func validate_layout_json(json_string: String) -> Dictionary:
 	if parse_result != OK:
 		return {"ok": false, "message": "layout JSON 解析失败"}
 
-	if not json.data is Array:
-		return {"ok": false, "message": "layout 根节点不是数组"}
-
-	var items := json.data as Array
-	for index in items.size():
-		var item = items[index]
-		if typeof(item) != TYPE_DICTIONARY:
-			return {"ok": false, "message": "layout[%d] 不是对象" % index}
-		var item_dict := item as Dictionary
-		var scene_path := str(item_dict.get("scene_path", "")).strip_edges()
-		if scene_path == "":
-			return {"ok": false, "message": "layout[%d].scene_path 为空" % index}
-		if not item_dict.has("position"):
-			return {"ok": false, "message": "layout[%d] 缺少 position" % index}
-		if not item_dict.has("basis"):
-			return {"ok": false, "message": "layout[%d] 缺少 basis" % index}
-
-	return {"ok": true, "count": items.size(), "message": "layout 校验通过"}
-
-func deserialize_json_to_scene(json_string: String, root: Node, excluded_group: String = "preview") -> bool:
-	var json := JSON.new()
-	var parse_result = json.parse(json_string)
-	if parse_result != OK:
-		push_error("JSON 解析失败")
-		return false
+	if not json.data is Array and not json.data is Dictionary:
+		return {"ok": false, "message": "layout 根节点不是数组或对象"}
 
 	if json.data is Array:
-		deserialize_items_to_scene(json.data, root, excluded_group)
-		return true
+		var items := json.data as Array
+		for index in items.size():
+			var item = items[index]
+			if typeof(item) != TYPE_DICTIONARY:
+				return {"ok": false, "message": "layout[%d] 不是对象" % index}
+			var item_dict := item as Dictionary
+			var scene_path := str(item_dict.get("scene_path", "")).strip_edges()
+			if scene_path == "":
+				return {"ok": false, "message": "layout[%d].scene_path 为空" % index}
+			if not item_dict.has("position"):
+				return {"ok": false, "message": "layout[%d] 缺少 position" % index}
+			if not item_dict.has("basis"):
+				return {"ok": false, "message": "layout[%d] 缺少 basis" % index}
+		return {"ok": true, "count": items.size(), "message": "layout 校验通过"}
 
-	push_error("布局数据格式错误")
-	return false
+	var parsed := parse_layout_document(json_string)
+	if not bool(parsed.get("ok", false)):
+		return parsed
+	var document_items :Variant= parsed.get("items", [])
+	return {"ok": true, "count": (document_items as Array).size(), "message": "layout 校验通过"}
+
+func deserialize_json_to_scene(json_string: String, root: Node, excluded_group: String = "preview") -> bool:
+	var parsed := parse_layout_document(json_string)
+	if not bool(parsed.get("ok", false)):
+		push_error(str(parsed.get("message", "布局数据格式错误")))
+		return false
+	if root.has_method("apply_layout_scene_meta"):
+		root.call("apply_layout_scene_meta", parsed.get("meta", {}))
+	deserialize_items_to_scene(parsed.get("items", []), root, excluded_group)
+	return true
 
 func deserialize_items_to_scene(data: Array, root: Node, excluded_group: String = "preview") -> void:
 	_clear_scene(root, excluded_group)
@@ -97,10 +138,23 @@ func _serialize_node3d(node: Node3D) -> Dictionary:
 			item["type"] = odf_type
 	if node.has_meta("build_view_layer"):
 		item["build_view_layer"] = int(node.get_meta("build_view_layer"))
+	if node.has_meta("story_level"):
+		item["story_level"] = int(node.get_meta("story_level"))
+	if node.has_meta("floor_kind"):
+		item["floor_kind"] = str(node.get_meta("floor_kind"))
 	if bool(node.get_meta("cell_line_unit", false)):
 		item["cell_line_unit"] = true
 		item["floor_cell_x"] = int(node.get_meta("floor_cell_x", 0))
 		item["floor_cell_z"] = int(node.get_meta("floor_cell_z", 0))
+	if bool(node.get_meta("air_wall", false)):
+		item["air_wall"] = true
+		item["air_wall_height"] = float(node.get_meta("air_wall_height", StoryLevels.MEZZANINE_WALL_HEIGHT))
+	if bool(node.get_meta("auto_mezzanine_air_wall", false)):
+		item["auto_mezzanine_air_wall"] = true
+	if node.has_meta("mezzanine_edge_cell_x"):
+		item["mezzanine_edge_cell_x"] = int(node.get_meta("mezzanine_edge_cell_x", 0))
+		item["mezzanine_edge_cell_z"] = int(node.get_meta("mezzanine_edge_cell_z", 0))
+		item["mezzanine_edge_index"] = int(node.get_meta("mezzanine_edge_index", 0))
 	return item
 
 func _clear_scene(root: Node, excluded_group: String) -> void:
@@ -134,10 +188,22 @@ func _instantiate_item(item: Dictionary, root: Node) -> void:
 	if cabinet_id != "":
 		new_instance.set_meta("module_cabinet_id", cabinet_id)
 	new_instance.set_meta("build_view_layer", int(item.get("build_view_layer", 0)))
+	new_instance.set_meta("story_level", int(item.get("story_level", 1)))
+	if item.has("floor_kind"):
+		new_instance.set_meta("floor_kind", str(item.get("floor_kind", "ground")))
 	if bool(item.get("cell_line_unit", false)):
 		new_instance.set_meta("cell_line_unit", true)
 		new_instance.set_meta("floor_cell_x", int(item.get("floor_cell_x", 0)))
 		new_instance.set_meta("floor_cell_z", int(item.get("floor_cell_z", 0)))
+	if bool(item.get("air_wall", false)):
+		new_instance.set_meta("air_wall", true)
+		new_instance.set_meta("air_wall_height", float(item.get("air_wall_height", StoryLevels.MEZZANINE_WALL_HEIGHT)))
+	if bool(item.get("auto_mezzanine_air_wall", false)):
+		new_instance.set_meta("auto_mezzanine_air_wall", true)
+	if item.has("mezzanine_edge_cell_x"):
+		new_instance.set_meta("mezzanine_edge_cell_x", int(item.get("mezzanine_edge_cell_x", 0)))
+		new_instance.set_meta("mezzanine_edge_cell_z", int(item.get("mezzanine_edge_cell_z", 0)))
+		new_instance.set_meta("mezzanine_edge_index", int(item.get("mezzanine_edge_index", 0)))
 	if (item.has("odf_type") or item.has("type")) and item.has("custom_state") and item["custom_state"] is Dictionary:
 		var custom_state := (item["custom_state"] as Dictionary).duplicate(true)
 		var odf_type := int(item.get("odf_type", item.get("type", 0)))

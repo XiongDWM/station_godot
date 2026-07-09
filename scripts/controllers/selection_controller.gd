@@ -692,7 +692,9 @@ func delete_selected_object(operation_panel: Control, root: Node = null) -> void
 	if selected_object:
 		if root and selected_object.has_meta("cell_line_unit") and root.has_method("unregister_built_floor_cell"):
 			var cell := Vector3i(int(selected_object.get_meta("floor_cell_x", 0)), 0, int(selected_object.get_meta("floor_cell_z", 0)))
-			root.call("unregister_built_floor_cell", cell)
+			var story := int(selected_object.get_meta("story_level", 1))
+			var floor_kind := str(selected_object.get_meta("floor_kind", "ground"))
+			root.call("unregister_built_floor_cell", cell, story, floor_kind)
 		if root and root.has_method("unregister_runtime_layer_node"):
 			root.call("unregister_runtime_layer_node", selected_object)
 		selected_object.queue_free()

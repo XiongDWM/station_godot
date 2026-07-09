@@ -49,5 +49,8 @@ static func cell_center_world(grid_map: GridMap, cell: Vector3i, world_y: float)
 	world_center.y = world_y
 	return world_center
 
-static func cell_key(layer: int, cell_x: int, cell_z: int) -> String:
-	return "%d,%d,%d" % [layer, cell_x, cell_z]
+static func unit_cell_key(story_level: int, layer: int, cell_x: int, cell_z: int) -> String:
+	return "%d,%d,%d,%d" % [story_level, layer, cell_x, cell_z]
+
+static func floor_cell_key(story_level: int, layer: int, cell_x: int, cell_z: int, floor_kind: String) -> String:
+	return "%d,%d,%d,%d,%s" % [story_level, layer, cell_x, cell_z, floor_kind]

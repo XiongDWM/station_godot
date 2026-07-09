@@ -18,16 +18,21 @@ const GROUND_BASE_SIZE := Vector2(1600.0, 1600.0)
 const GROUND_BASE_THICKNESS := 0.06
 const GROUND_BASE_MARGIN := 0.0
 const FIRST_PERSON_REVEAL_BASE_OFFSET := 0.28
+const FIRST_PERSON_AMBIENT_ENERGY := 0.55
+const BUILD_AMBIENT_ENERGY := 0.85
+const FIRST_PERSON_DIRECTIONAL_ENERGY := 0.42
+const FIRST_PERSON_FILL_LIGHT_SCALE := 1.55
+const FIRST_PERSON_INDOOR_LIGHT_ENERGY := 0.62
+const FIRST_PERSON_INDOOR_LIGHT_RANGE := 9.0
 const LAYER_GRID_COLOR := Color(0.08, 0.08, 0.08, 0.72)
 const LAYER_GRID_DASH_LENGTH := 0.38
 const LAYER_GRID_GAP_LENGTH := 0.24
 const LAYER_GRID_ELEVATION := 0.02
 const SAVE_NOTIFICATION_DURATION_MS := 2600
-const VIEW_LAYER_Y := {
-	-1: -1.0,
-	0: 0.0,
-	1: 2.3,
-}
+const STORY_CONTROL_ROW_HEIGHT_RATIO := 1.0 / 3.0
+const DEFAULT_BUILDING_STORY_COUNT := 3
+const ABSOLUTE_MAX_STORY_LEVEL := 99
+const VIEW_LAYER_Y := StoryLevels.VIEW_LAYER_OFFSET
 
 @export_group("Ground Base")
 @export var ground_base_color: Color = Color(0.70, 0.74, 0.78, 1.0)
@@ -52,6 +57,9 @@ const VIEW_LAYER_Y := {
 @export var btn_rotate: Button
 @export var btn_delete: Button
 @export var btn_save:Button
+@export var story_count_spin: SpinBox
+@export var story_count_save_button: Button
+@export var story_level_button: Button
 @export var left_menu_panel: Control
 @export var build_panel: Control
 @export var http_request:HTTPRequest
@@ -75,6 +83,8 @@ var layout_serializer := LayoutSerializerScript.new()
 var layout_flow_controller := LayoutFlowControllerScript.new()
 var selection_controller := SelectionControllerScript.new()
 var active_build_view_layer := 0
+var active_story_level := 1
+var building_story_count: int = DEFAULT_BUILDING_STORY_COUNT
 var pipe_button_icon: Texture2D
 var trench_button_icon: Texture2D
 var layer_button_icons := {}
@@ -107,6 +117,14 @@ var visible_underfloor_nodes := {}
 var runtime_scene_index_dirty := true
 var single_cell_grid_mesh_cache: ArrayMesh
 var built_floor_overlay_material_cache: StandardMaterial3D
+var grid_map_base_y := 0.0
+var world_environment: WorldEnvironment
+var scene_directional_light: DirectionalLight3D
+var cached_ambient_energy := BUILD_AMBIENT_ENERGY
+var cached_directional_energy := 0.92
+var scene_fill_lights: Array[OmniLight3D] = []
+var cached_fill_light_energies := {}
+var first_person_indoor_light: OmniLight3D
 
 func _ready():
 	# print("[MainScene._ready] btn_cube=", btn_cube, ", btn_wall=", btn_wall, ", preview_cube=", preview_cube, ", preview_wall=", preview_wall, ", block_scene=", block_scene, ", wall_scene=", wall_scene)
@@ -116,6 +134,12 @@ func _ready():
 	_setup_ground_base()
 	_setup_layer_grid_overlay()
 	scene_camera = get_node_or_null("CameraPivot/Camera3D") as Camera3D
+	if grid_map:
+		grid_map_base_y = grid_map.position.y
+	world_environment = get_node_or_null("WorldEnvironment") as WorldEnvironment
+	scene_directional_light = get_node_or_null("DirectionalLight3D") as DirectionalLight3D
+	_setup_first_person_indoor_light()
+	_cache_scene_lighting_baseline()
 	_apply_scene_shadow_settings()
 	_setup_side_view_layer_planes()
 	building_controller.initialize(preview_cube, preview_wall, runtime_preview_pipe, preview_rack, preview_ac)
@@ -130,7 +154,10 @@ func _ready():
 	layout_flow_controller.bind_api_signals()
 	layout_flow_controller.bootstrap()
 	_apply_build_view_layer(active_build_view_layer)
+	set_building_story_count(building_story_count, false)
+	_apply_story_level(active_story_level)
 	on_camera_mode_changed("orbit")
+	call_deferred("_configure_story_controls")
 
 func _deactivate_hidden_prototypes() -> void:
 	for child in get_children():
@@ -160,12 +187,18 @@ func _on_building_mode_selected(scene: PackedScene, preview: MeshInstance3D, pla
 	# print("[MainScene._on_building_mode_selected] scene=", scene, ", preview=", preview)
 	_configure_runtime_line_preview(scene, preview)
 	building_controller.set_building_mode(scene, preview, operation_panel, module_panel, placement_mode)
+	if scene and scene.resource_path == "res://floor_brick.tscn":
+		update_floor_build_tooltip(building_controller.get_floor_kind_label(), building_controller.get_active_story_level())
 	if scene and scene.resource_path == "res://door_object.tscn":
 		update_door_build_tooltip(building_controller.get_door_variant_label())
 
 func update_door_build_tooltip(variant_label: String) -> void:
 	if btn_door:
-		btn_door.tooltip_text = "门 (%s) · Tab切换" % variant_label
+		btn_door.tooltip_text = "门 (%s) · Tab切换 · L%d/%d" % [variant_label, active_story_level, building_story_count]
+
+func update_floor_build_tooltip(floor_kind_label: String, story_level: int) -> void:
+	if btn_floor:
+		btn_floor.tooltip_text = "地板 · %s · L%d/%d · ↑↓切换类型" % [floor_kind_label, story_level, building_story_count]
 
 func _process(_delta):
 	_update_ground_base_position()
@@ -182,6 +215,10 @@ func _process(_delta):
 
 func _unhandled_input(event):
 	if selection_controller.handle_unhandled_input(self, event, operation_panel, module_panel):
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_L:
+		_cycle_story_level()
+		get_viewport().set_input_as_handled()
 		return
 	if building_controller.handle_unhandled_input(self, event):
 		return
@@ -331,7 +368,7 @@ func _configure_build_toolbar() -> void:
 	if btn_door:
 		btn_door.tooltip_text = "门 (单扇防火门) · Tab切换"
 	if btn_floor:
-		btn_floor.tooltip_text = "地板"
+		btn_floor.tooltip_text = "地板 · ↑↓地面/天花板 · L1/%d" % building_story_count
 	if btn_pipeline:
 		btn_pipeline.tooltip_text = "贴墙竖管"
 		btn_pipeline.icon = pipe_button_icon
@@ -399,17 +436,44 @@ func _apply_build_view_layer(layer: int) -> void:
 	_apply_scene_layer_visibility()
 	_update_layer_plane_visuals(layer)
 	_enforce_build_mode_for_active_layer()
+	if layer == 1 or layer == -1:
+		_ensure_mezzanine_air_walls(active_story_level)
+	if building_controller.is_active_floor_building():
+		update_floor_build_tooltip(building_controller.get_floor_kind_label(), active_story_level)
+
+func _ensure_mezzanine_air_walls(story_level: int) -> void:
+	if not grid_map:
+		return
+	building_controller.ensure_mezzanine_perimeter_air_walls(self, grid_map, story_level)
+
+func _refresh_mezzanine_air_walls_for_all_stories() -> void:
+	if not grid_map:
+		return
+	building_controller.refresh_all_story_mezzanine_air_walls(self, grid_map, building_story_count)
+
+func _sync_all_story_ground_floors_from_l1() -> void:
+	if not grid_map or not floor_brick_scene:
+		return
+	var changed := building_controller.sync_all_story_ground_floors_from_l1(
+		self,
+		grid_map,
+		floor_brick_scene,
+		building_story_count
+	)
+	if changed > 0:
+		print("已从 L1 同步地面到全楼，变更 %d 处" % changed)
+	_refresh_mezzanine_air_walls_for_all_stories()
 
 func _update_build_toolbar_for_layer(layer: int) -> void:
 	var pipeline_layer := layer != 0
 	if btn_wall:
-		btn_wall.visible = not pipeline_layer
+		btn_wall.visible = layer == 0 or layer == 1 or layer == -1
 	if btn_door:
-		btn_door.visible = not pipeline_layer
+		btn_door.visible = layer == 0
 	if btn_floor:
-		btn_floor.visible = not pipeline_layer
+		btn_floor.visible = layer == 0
 	if btn_pipeline:
-		btn_pipeline.visible = true
+		btn_pipeline.visible = layer == 0 or layer == 1
 	if btn_view_layer:
 		btn_view_layer.visible = not pipeline_layer
 	if runtime_pipe_button:
@@ -418,7 +482,7 @@ func _update_build_toolbar_for_layer(layer: int) -> void:
 		runtime_trench_button.visible = pipeline_layer
 	if runtime_view_layer_button:
 		runtime_view_layer_button.visible = true
-		runtime_view_layer_button.tooltip_text = "视图层: %s" % BUILD_VIEW_LABELS.get(layer, "中层结构")
+		runtime_view_layer_button.tooltip_text = "视图层: %s · L%d/%d" % [BUILD_VIEW_LABELS.get(layer, "中层结构"), active_story_level, building_story_count]
 		runtime_view_layer_button.icon = layer_button_icons.get(layer, null)
 		runtime_view_layer_button.expand_icon = true
 
@@ -426,8 +490,183 @@ func _enforce_build_mode_for_active_layer() -> void:
 	var placement_mode :Variant= building_controller.get_placement_mode()
 	if active_build_view_layer == 0 and placement_mode == "line":
 		building_controller.cancel_build_mode()
-	elif active_build_view_layer != 0 and (placement_mode == "point" or placement_mode == "cell_line") and building_controller.is_active():
+	elif active_build_view_layer == 1 and placement_mode == "cell_line":
 		building_controller.cancel_build_mode()
+	elif active_build_view_layer == -1 and placement_mode in ["point", "cell_line", "wall_line"]:
+		if building_controller.is_active():
+			building_controller.cancel_build_mode()
+	elif active_build_view_layer != 0 and active_build_view_layer != 1 and placement_mode == "point" and building_controller.is_active():
+		building_controller.cancel_build_mode()
+
+func _cycle_story_level() -> void:
+	active_story_level += 1
+	if active_story_level > building_story_count:
+		active_story_level = 1
+	_apply_story_level(active_story_level)
+
+func ensure_floor_build_view_for_kind(floor_kind: String) -> void:
+	var target_layer := StoryLevels.get_floor_build_view_layer(floor_kind)
+	if active_build_view_layer != target_layer:
+		_apply_build_view_layer(target_layer)
+
+func get_building_story_count() -> int:
+	return building_story_count
+
+func get_building_overview_camera_state(fallback_focus: Vector3, fallback_distance: float) -> Dictionary:
+	var bounds := _get_grid_bounds()
+	var center_x := fallback_focus.x
+	var center_z := fallback_focus.z
+	if not bounds.is_empty():
+		center_x = float(bounds.get("center_x", center_x))
+		center_z = float(bounds.get("center_z", center_z))
+	var top_y := StoryLevels.get_story_base(building_story_count) + StoryLevels.CEILING_Y_OFFSET
+	var center_y := top_y * 0.5
+	var extent := maxf(maxf(float(bounds.get("width", 16.0)), float(bounds.get("depth", 16.0))), 16.0)
+	var distance := maxf(
+		fallback_distance,
+		maxf(top_y * 1.45, extent * 1.35)
+	)
+	return {
+		"focus": Vector3(center_x, center_y, center_z),
+		"distance": distance,
+	}
+
+func get_layout_scene_meta() -> Dictionary:
+	return {
+		"building_story_count": building_story_count,
+	}
+
+func apply_layout_scene_meta(meta: Dictionary) -> void:
+	if meta.has("building_story_count"):
+		set_building_story_count(int(meta.get("building_story_count", building_story_count)), false)
+
+func set_building_story_count(count: int, refresh_active_story: bool = true) -> void:
+	building_story_count = clampi(int(count), 1, ABSOLUTE_MAX_STORY_LEVEL)
+	building_controller.set_max_story_level(building_story_count)
+	if story_count_spin and int(story_count_spin.value) != building_story_count:
+		story_count_spin.set_value_no_signal(building_story_count)
+	if refresh_active_story and active_story_level > building_story_count:
+		_apply_story_level(building_story_count)
+	_update_story_count_ui()
+	if _has_l1_ground_reference():
+		call_deferred("_sync_all_story_ground_floors_from_l1")
+
+func _configure_story_controls() -> void:
+	if not runtime_view_layer_button:
+		return
+	var anchor_btn := runtime_view_layer_button
+	var control_width := anchor_btn.size.x
+	var row_height := anchor_btn.size.y * STORY_CONTROL_ROW_HEIGHT_RATIO
+	var column := anchor_btn.get_node_or_null("StoryControlsColumn") as VBoxContainer
+	if not column:
+		column = anchor_btn.get_parent().get_node_or_null("StoryControlsColumn") as VBoxContainer
+	if column:
+		column.position = Vector2(anchor_btn.position.x, anchor_btn.position.y + anchor_btn.size.y + 1.0)
+		column.scale = anchor_btn.scale
+		column.custom_minimum_size = Vector2(control_width, row_height * 2.0 + column.get_theme_constant("separation"))
+		column.size = column.custom_minimum_size
+	if story_count_spin:
+		story_count_spin.min_value = 1.0
+		story_count_spin.max_value = float(ABSOLUTE_MAX_STORY_LEVEL)
+		story_count_spin.step = 1.0
+		story_count_spin.rounded = true
+		story_count_spin.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		story_count_spin.add_theme_font_size_override("font_size", 9)
+		story_count_spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		story_count_spin.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		story_count_spin.custom_minimum_size = Vector2(0.0, row_height)
+		story_count_spin.value = building_story_count
+		story_count_spin.tooltip_text = "输入大楼总层数"
+		var count_row := story_count_spin.get_parent() as HBoxContainer
+		if count_row:
+			count_row.custom_minimum_size = Vector2(control_width, row_height)
+	if story_count_save_button:
+		story_count_save_button.custom_minimum_size = Vector2(22.0, row_height)
+		story_count_save_button.add_theme_font_size_override("font_size", 9)
+		story_count_save_button.tooltip_text = "保存总层数到场景"
+		if not story_count_save_button.pressed.is_connected(_on_story_count_save_pressed):
+			story_count_save_button.pressed.connect(_on_story_count_save_pressed)
+	if story_level_button:
+		story_level_button.custom_minimum_size = Vector2(control_width, row_height)
+		story_level_button.add_theme_font_size_override("font_size", 9)
+		story_level_button.tooltip_text = "切换当前建造楼层"
+		if not story_level_button.pressed.is_connected(_on_story_level_button_pressed):
+			story_level_button.pressed.connect(_on_story_level_button_pressed)
+	_update_story_level_button()
+
+func _on_story_count_save_pressed() -> void:
+	if story_count_spin:
+		set_building_story_count(int(story_count_spin.value))
+	layout_flow_controller.save_layoutdata()
+
+func _on_story_level_button_pressed() -> void:
+	_cycle_story_level()
+
+func _update_story_level_button() -> void:
+	if story_level_button:
+		story_level_button.text = "L%d/%d" % [active_story_level, building_story_count]
+
+func _update_story_count_ui() -> void:
+	if btn_floor:
+		btn_floor.tooltip_text = "地板 · L%d/%d · ↑↓切换" % [active_story_level, building_story_count]
+	if runtime_view_layer_button:
+		runtime_view_layer_button.tooltip_text = "视图层: %s · L%d/%d" % [
+			BUILD_VIEW_LABELS.get(active_build_view_layer, "中层结构"),
+			active_story_level,
+			building_story_count,
+		]
+	_update_story_level_button()
+
+func _apply_story_level(story_level: int) -> void:
+	active_story_level = StoryLevels.normalize_story_level(story_level, building_story_count)
+	building_controller.set_active_story_level(active_story_level)
+	_update_story_workspace_visuals()
+	_try_sync_story_ground_from_l1(active_story_level)
+	_update_build_toolbar_for_layer(active_build_view_layer)
+	_apply_scene_layer_visibility()
+	_update_layer_plane_visuals(active_build_view_layer)
+	if active_build_view_layer == 1 or active_build_view_layer == -1:
+		_ensure_mezzanine_air_walls(active_story_level)
+	if building_controller.is_active_floor_building():
+		update_floor_build_tooltip(building_controller.get_floor_kind_label(), active_story_level)
+	_update_story_count_ui()
+	print("切换到楼层 L%d/%d" % [active_story_level, building_story_count])
+
+func _try_sync_story_ground_from_l1(story_level: int) -> void:
+	if story_level <= 1 or not grid_map or not floor_brick_scene:
+		return
+	if not _has_l1_ground_reference():
+		return
+	_sync_all_story_ground_floors_from_l1()
+
+func _has_l1_ground_reference() -> bool:
+	if not grid_map:
+		return _story_has_built_ground_floors(1)
+	return not building_controller.collect_l1_ground_reference_cells(self, grid_map).is_empty()
+
+func _story_has_built_ground_floors(story_level: int) -> bool:
+	for child in get_children():
+		if not child is Node3D:
+			continue
+		var node := child as Node3D
+		if not bool(node.get_meta("cell_line_unit", false)):
+			continue
+		if StoryLevels.normalize_floor_kind(node.get_meta("floor_kind", "ground")) != "ground":
+			continue
+		if StoryLevels.normalize_story_level(node.get_meta("story_level", 1), building_story_count) == story_level:
+			return true
+	return false
+
+func _story_has_built_floors(story_level: int) -> bool:
+	for child in get_children():
+		if not child is Node3D:
+			continue
+		var node := child as Node3D
+		if not bool(node.get_meta("cell_line_unit", false)):
+			continue
+		if StoryLevels.normalize_story_level(node.get_meta("story_level", 1), building_story_count) == story_level:
+			return true
+	return false
 
 func _apply_scene_layer_visibility() -> void:
 	_ensure_runtime_scene_indexes()
@@ -439,7 +678,7 @@ func _apply_scene_layer_visibility() -> void:
 			if not is_instance_valid(node):
 				nodes.erase(node_id)
 				continue
-			node.visible = camera_mode_name == "side" or layer == active_build_view_layer
+			node.visible = _is_runtime_node_visible(node, layer)
 	_update_built_floor_grid_overlay_visibility()
 
 func rebuild_runtime_scene_indexes() -> void:
@@ -462,7 +701,23 @@ func register_runtime_layer_node(node: Node3D) -> void:
 		return
 	_register_runtime_layer_node_internal(node)
 	var layer := int(node.get_meta("build_view_layer", 0))
-	node.visible = camera_mode_name == "side" or layer == active_build_view_layer
+	node.visible = _is_runtime_node_visible(node, layer)
+
+func _is_ceiling_floor_node(node: Node3D) -> bool:
+	return bool(node.get_meta("cell_line_unit", false)) and StoryLevels.normalize_floor_kind(node.get_meta("floor_kind", "ground")) == "ceiling"
+
+func _should_hide_placed_ceiling_in_camera() -> bool:
+	return camera_mode_name == "orbit"
+
+func _is_runtime_node_visible(node: Node3D, view_layer: int) -> bool:
+	if camera_mode_name == "side":
+		return true
+	if camera_mode_name == "building_overview":
+		return view_layer == active_build_view_layer
+	if _should_hide_placed_ceiling_in_camera() and _is_ceiling_floor_node(node):
+		return false
+	var story := StoryLevels.normalize_story_level(node.get_meta("story_level", 1), building_story_count)
+	return view_layer == active_build_view_layer and story == active_story_level
 
 func unregister_runtime_layer_node(node: Node3D) -> void:
 	_ensure_runtime_scene_index_state()
@@ -495,8 +750,31 @@ func _register_runtime_layer_node_internal(node: Node3D) -> void:
 		runtime_layer_nodes[layer] = {}
 	var nodes := runtime_layer_nodes[layer] as Dictionary
 	nodes[node.get_instance_id()] = node
-	if layer == -1:
-		_index_underfloor_node(node)
+	if layer == -1 or layer == 1:
+		_index_reveal_layer_node(node)
+
+func _index_reveal_layer_node(node: Node3D) -> void:
+	if not grid_map:
+		return
+	var layer := int(node.get_meta("build_view_layer", 0))
+	var story := StoryLevels.normalize_story_level(node.get_meta("story_level", 1), building_story_count)
+	var bounds := _get_node_world_xz_bounds(node)
+	if bounds.is_empty():
+		return
+	var min_cell := grid_map.local_to_map(grid_map.to_local(Vector3(float(bounds.get("min_x", 0.0)), 0.0, float(bounds.get("min_z", 0.0)))))
+	var max_cell := grid_map.local_to_map(grid_map.to_local(Vector3(float(bounds.get("max_x", 0.0)), 0.0, float(bounds.get("max_z", 0.0)))))
+	var min_x := mini(min_cell.x, max_cell.x)
+	var max_x := maxi(min_cell.x, max_cell.x)
+	var min_z := mini(min_cell.z, max_cell.z)
+	var max_z := maxi(min_cell.z, max_cell.z)
+	var node_id := node.get_instance_id()
+	for cell_x in range(min_x, max_x + 1):
+		for cell_z in range(min_z, max_z + 1):
+			var cell_key := _reveal_layer_cell_key(story, layer, cell_x, cell_z)
+			if not underfloor_nodes_by_cell.has(cell_key):
+				underfloor_nodes_by_cell[cell_key] = {}
+			var cell_nodes := underfloor_nodes_by_cell[cell_key] as Dictionary
+			cell_nodes[node_id] = node
 
 func _ensure_runtime_scene_indexes() -> void:
 	_ensure_runtime_scene_index_state()
@@ -511,30 +789,17 @@ func _ensure_runtime_scene_index_state() -> void:
 	if typeof(visible_underfloor_nodes) != TYPE_DICTIONARY:
 		visible_underfloor_nodes = {}
 
-func _index_underfloor_node(node: Node3D) -> void:
-	if not grid_map:
-		return
-	var bounds := _get_node_world_xz_bounds(node)
-	if bounds.is_empty():
-		return
-	var min_cell := grid_map.local_to_map(grid_map.to_local(Vector3(float(bounds.get("min_x", 0.0)), 0.0, float(bounds.get("min_z", 0.0)))))
-	var max_cell := grid_map.local_to_map(grid_map.to_local(Vector3(float(bounds.get("max_x", 0.0)), 0.0, float(bounds.get("max_z", 0.0)))))
-	var min_x := mini(min_cell.x, max_cell.x)
-	var max_x := maxi(min_cell.x, max_cell.x)
-	var min_z := mini(min_cell.z, max_cell.z)
-	var max_z := maxi(min_cell.z, max_cell.z)
-	var node_id := node.get_instance_id()
-	for cell_x in range(min_x, max_x + 1):
-		for cell_z in range(min_z, max_z + 1):
-			var cell_key := _floor_cell_key(Vector3i(cell_x, 0, cell_z))
-			if not underfloor_nodes_by_cell.has(cell_key):
-				underfloor_nodes_by_cell[cell_key] = {}
-			var cell_nodes := underfloor_nodes_by_cell[cell_key] as Dictionary
-			cell_nodes[node_id] = node
+func _reveal_layer_cell_key(story_level: int, view_layer: int, cell_x: int, cell_z: int) -> String:
+	return "%d,%d,%d,%d" % [story_level, view_layer, cell_x, cell_z]
+
+func _update_story_workspace_visuals() -> void:
+	if grid_map:
+		grid_map.position.y = grid_map_base_y + StoryLevels.get_story_base(active_story_level)
+	_update_ground_base_position()
 
 func _update_layer_plane_visuals(layer: int) -> void:
 	if grid_map:
-		grid_map.visible = layer == 0 or camera_mode_name == "side"
+		grid_map.visible = layer == 0 or camera_mode_name in ["side", "building_overview"]
 	if ground_base:
 		ground_base.visible = _should_show_ground_base(layer)
 	if not layer_grid_overlay:
@@ -570,7 +835,7 @@ func _apply_scene_shadow_settings() -> void:
 				library.call("set_item_mesh_cast_shadow", item_id, shadow_mode)
 	for child in get_children():
 		if child is DirectionalLight3D:
-			(child as DirectionalLight3D).shadow_enabled = scene_shadows_enabled
+			(child as DirectionalLight3D).shadow_enabled = scene_shadows_enabled and camera_mode_name != "first_person"
 		elif child is OmniLight3D:
 			(child as OmniLight3D).shadow_enabled = false
 	_update_shadow_toggle_button()
@@ -587,6 +852,11 @@ func _build_ground_base_mesh() -> PlaneMesh:
 	mesh.material = material
 	return mesh
 
+func _get_l1_grid_floor_top_y() -> float:
+	if not grid_map:
+		return 0.0
+	return grid_map.global_position.y - StoryLevels.get_story_base(active_story_level) + grid_map.cell_size.y
+
 func _get_ground_base_position() -> Vector3:
 	var bounds := _get_grid_bounds()
 	var center_x := float(bounds.get("center_x", 0.0))
@@ -595,6 +865,9 @@ func _get_ground_base_position() -> Vector3:
 	if grid_map:
 		if camera_mode_name == "first_person" and not revealed_floor_cells.is_empty():
 			base_y = _get_view_layer_plane_y(-1) - grid_map.cell_size.y - FIRST_PERSON_REVEAL_BASE_OFFSET
+		elif active_build_view_layer == 0:
+			var story_ground_y := StoryLevels.get_floor_kind_y(active_story_level, "ground", _get_l1_grid_floor_top_y())
+			base_y = story_ground_y - grid_map.cell_size.y - 0.02
 		else:
 			base_y -= grid_map.cell_size.y * 0.5 + 0.02
 	if scene_camera:
@@ -646,8 +919,10 @@ func _get_grid_bounds() -> Dictionary:
 	}
 	return cached_grid_bounds
 
-func _get_view_layer_plane_y(layer: int) -> float:
-	return float(VIEW_LAYER_Y.get(layer, VIEW_LAYER_Y[0]))
+func _get_view_layer_plane_y(layer: int, story_level: int = -1) -> float:
+	if story_level < 1:
+		story_level = active_story_level
+	return StoryLevels.get_view_layer_y(story_level, layer)
 
 func _setup_layer_grid_overlay() -> void:
 	if layer_grid_overlay:
@@ -773,18 +1048,78 @@ func on_camera_mode_changed(mode_name: String) -> void:
 	_apply_scene_layer_visibility()
 	_update_layer_plane_visuals(active_build_view_layer)
 	_update_side_view_layer_plane_materials()
+	_update_indoor_lighting_for_camera()
+
+func _setup_first_person_indoor_light() -> void:
+	var camera_pivot := get_node_or_null("CameraPivot") as Node3D
+	if not camera_pivot:
+		return
+	first_person_indoor_light = camera_pivot.get_node_or_null("FirstPersonIndoorLight") as OmniLight3D
+	if not first_person_indoor_light:
+		first_person_indoor_light = OmniLight3D.new()
+		first_person_indoor_light.name = "FirstPersonIndoorLight"
+		first_person_indoor_light.light_color = Color(1.0, 0.97, 0.9)
+		first_person_indoor_light.omni_range = FIRST_PERSON_INDOOR_LIGHT_RANGE
+		first_person_indoor_light.omni_attenuation = 0.7
+		first_person_indoor_light.shadow_enabled = false
+		camera_pivot.add_child(first_person_indoor_light)
+	first_person_indoor_light.light_energy = 0.0
+
+func _cache_scene_lighting_baseline() -> void:
+	if world_environment and world_environment.environment:
+		cached_ambient_energy = world_environment.environment.ambient_light_energy
+	if scene_directional_light:
+		cached_directional_energy = scene_directional_light.light_energy
+	scene_fill_lights.clear()
+	cached_fill_light_energies.clear()
+	for child in get_children():
+		if child is OmniLight3D:
+			var fill_light := child as OmniLight3D
+			if fill_light == first_person_indoor_light:
+				continue
+			scene_fill_lights.append(fill_light)
+			cached_fill_light_energies[fill_light.get_instance_id()] = fill_light.light_energy
+
+func _update_indoor_lighting_for_camera() -> void:
+	var first_person := camera_mode_name == "first_person"
+	if world_environment and world_environment.environment:
+		world_environment.environment.ambient_light_energy = FIRST_PERSON_AMBIENT_ENERGY if first_person else cached_ambient_energy
+	if scene_directional_light:
+		scene_directional_light.light_energy = FIRST_PERSON_DIRECTIONAL_ENERGY if first_person else cached_directional_energy
+		scene_directional_light.shadow_enabled = scene_shadows_enabled and not first_person
+	for fill_light in scene_fill_lights:
+		if not is_instance_valid(fill_light):
+			continue
+		var base_energy := float(cached_fill_light_energies.get(fill_light.get_instance_id(), fill_light.light_energy))
+		fill_light.light_energy = base_energy * FIRST_PERSON_FILL_LIGHT_SCALE if first_person else base_energy
+	if first_person_indoor_light:
+		first_person_indoor_light.light_energy = FIRST_PERSON_INDOOR_LIGHT_ENERGY if first_person else 0.0
+	_apply_ceiling_light_energy_recursive(self, first_person)
+
+func _apply_ceiling_light_energy_recursive(node: Node, enabled: bool) -> void:
+	if node is Light3D and bool(node.get_meta("ceiling_light", false)):
+		var stored_energy := float(node.get_meta("ceiling_light_energy", 1.45))
+		(node as Light3D).light_energy = stored_energy if enabled else 0.0
+	for child in node.get_children():
+		_apply_ceiling_light_energy_recursive(child, enabled)
 
 func request_side_view_enter_layer(layer: int) -> void:
 	_apply_build_view_layer(layer)
 
+func get_first_person_world_y(eye_offset: float = 1.7) -> float:
+	if not grid_map:
+		return eye_offset
+	var ground_y := StoryLevels.get_floor_kind_y(active_story_level, "ground", _get_l1_grid_floor_top_y())
+	return ground_y + eye_offset
+
 func get_default_first_person_position(fallback: Vector3) -> Vector3:
 	var bounds := _get_grid_bounds()
 	if bounds.is_empty() or not grid_map:
-		return Vector3(fallback.x, 1.0, fallback.z)
+		return Vector3(fallback.x, get_first_person_world_y(), fallback.z)
 	var cell_size := grid_map.cell_size
 	var clamped_x := clampf(fallback.x, float(bounds.get("center_x", 0.0)) - float(bounds.get("width", 0.0)) * 0.5 + cell_size.x, float(bounds.get("center_x", 0.0)) + float(bounds.get("width", 0.0)) * 0.5 - cell_size.x)
 	var clamped_z := clampf(fallback.z, float(bounds.get("center_z", 0.0)) - float(bounds.get("depth", 0.0)) * 0.5 + cell_size.z, float(bounds.get("center_z", 0.0)) + float(bounds.get("depth", 0.0)) * 0.5 - cell_size.z)
-	return Vector3(clamped_x, 1.0, clamped_z)
+	return Vector3(clamped_x, get_first_person_world_y(), clamped_z)
 
 func get_default_side_view_focus_position(fallback: Vector3) -> Vector3:
 	var bounds := _get_grid_bounds()
@@ -794,7 +1129,7 @@ func get_default_side_view_focus_position(fallback: Vector3) -> Vector3:
 
 func _should_show_ground_base(layer: int) -> bool:
 	_ensure_revealed_floor_state()
-	if camera_mode_name == "side":
+	if camera_mode_name == "side" or camera_mode_name == "building_overview":
 		return true
 	return layer == 0
 
@@ -802,111 +1137,138 @@ func _toggle_first_person_floor_reveal_at_cursor() -> bool:
 	_ensure_revealed_floor_state()
 	if camera_mode_name != "first_person" or not grid_map or not scene_camera:
 		return false
-	var hit_result := _get_camera_cursor_hit(scene_camera)
+	var hit_result: Dictionary = _get_camera_cursor_hit(scene_camera)
+	if not hit_result.is_empty():
+		var collider: Variant = hit_result.get("collider")
+		if collider is StaticBody3D and collider.name == "FloorSelectionBody":
+			var body := collider as StaticBody3D
+			if bool(body.get_meta("revealable", true)):
+				var cell := Vector3i(int(body.get_meta("floor_cell_x", 0)), 0, int(body.get_meta("floor_cell_z", 0)))
+				var story := StoryLevels.normalize_story_level(body.get_meta("story_level", 1), building_story_count)
+				var floor_kind := StoryLevels.normalize_floor_kind(body.get_meta("floor_kind", "ground"))
+				return _toggle_floor_cell_reveal(cell, story, floor_kind)
 	var sample_local: Vector3
-	if hit_result.is_empty():
-		var fallback_point :Variant= _intersect_cursor_with_floor_plane(scene_camera)
+	var fallback_point :Variant= _intersect_cursor_with_story_floor_plane(scene_camera)
+	if fallback_point == null:
+		fallback_point = _intersect_cursor_with_story_ceiling_plane(scene_camera)
 		if fallback_point == null:
 			return false
 		sample_local = grid_map.to_local(fallback_point as Vector3)
-	else:
-		var collider :Variant= hit_result.get("collider", null)
-		if collider != grid_map:
-			var fallback_point :Variant= _intersect_cursor_with_floor_plane(scene_camera)
-			if fallback_point == null:
-				return false
-			sample_local = grid_map.to_local(fallback_point as Vector3)
-		else:
-			var hit_position := hit_result.get("position", Vector3.ZERO) as Vector3
-			var hit_normal := hit_result.get("normal", Vector3.UP) as Vector3
-			sample_local = grid_map.to_local(hit_position - hit_normal.normalized() * 0.02)
+		var ceiling_cell := grid_map.local_to_map(sample_local)
+		ceiling_cell.y = 0
+		return _toggle_floor_cell_reveal(ceiling_cell, active_story_level, "ceiling")
+	sample_local = grid_map.to_local(fallback_point as Vector3)
 	var floor_cell := grid_map.local_to_map(sample_local)
 	floor_cell.y = 0
-	return _toggle_floor_cell_reveal(floor_cell)
+	return _toggle_floor_cell_reveal(floor_cell, active_story_level, "ground")
 
-func _get_camera_cursor_hit(camera: Camera3D) -> Dictionary:
-	if not camera:
-		return {}
-	var mouse_pos := get_viewport().get_mouse_position()
-	var from := camera.project_ray_origin(mouse_pos)
-	var to := from + camera.project_ray_normal(mouse_pos) * 1000.0
-	var query := PhysicsRayQueryParameters3D.create(from, to)
-	return get_world_3d().direct_space_state.intersect_ray(query)
-
-func _intersect_cursor_with_floor_plane(camera: Camera3D) -> Variant:
+func _intersect_cursor_with_story_ceiling_plane(camera: Camera3D) -> Variant:
 	if not camera or not grid_map:
 		return null
 	var mouse_pos := get_viewport().get_mouse_position()
 	var ray_origin := camera.project_ray_origin(mouse_pos)
 	var ray_direction := camera.project_ray_normal(mouse_pos)
-	var floor_plane := Plane(Vector3.UP, grid_map.global_position.y)
+	var plane_y := StoryLevels.get_floor_kind_y(active_story_level, "ceiling", _get_l1_grid_floor_top_y())
+	var ceiling_plane := Plane(Vector3.UP, plane_y)
+	return ceiling_plane.intersects_ray(ray_origin, ray_direction)
+
+func _intersect_cursor_with_story_floor_plane(camera: Camera3D) -> Variant:
+	if not camera or not grid_map:
+		return null
+	var mouse_pos := get_viewport().get_mouse_position()
+	var ray_origin := camera.project_ray_origin(mouse_pos)
+	var ray_direction := camera.project_ray_normal(mouse_pos)
+	var plane_y := StoryLevels.get_floor_kind_y(active_story_level, "ground", _get_l1_grid_floor_top_y())
+	var floor_plane := Plane(Vector3.UP, plane_y)
 	return floor_plane.intersects_ray(ray_origin, ray_direction)
 
-func _toggle_floor_cell_reveal(cell: Vector3i) -> bool:
+func _toggle_floor_cell_reveal(cell: Vector3i, story_level: int, floor_kind: String) -> bool:
 	_ensure_revealed_floor_state()
 	if not grid_map:
 		return false
-	var cell_key := "%d,%d,%d" % [cell.x, cell.y, cell.z]
+	if not StoryLevels.is_revealable_floor_kind(floor_kind):
+		return false
+	cell.y = 0
+	var cell_key := _reveal_cell_key(story_level, cell, floor_kind)
 	if revealed_floor_cells.has(cell_key):
 		var saved := revealed_floor_cells[cell_key] as Dictionary
 		if bool(saved.get("built_floor", false)):
-			var built_floor := _find_built_floor_unit_at_cell(cell)
-			if built_floor:
-				built_floor.visible = true
-		else:
+			var restored_floor := _find_built_floor_unit_at_cell(cell, story_level, floor_kind)
+			if restored_floor:
+				restored_floor.visible = true
+		elif story_level == 1 and floor_kind == "ground":
 			grid_map.set_cell_item(cell, int(saved.get("item", -1)), int(saved.get("orientation", 0)))
 		revealed_floor_cells.erase(cell_key)
 		_remove_revealed_floor_overlay(cell_key)
 		_refresh_underfloor_visibility()
 		_update_layer_plane_visuals(active_build_view_layer)
 		return true
-	var item := grid_map.get_cell_item(cell)
-	if item < 0:
-		var built_floor := _find_built_floor_unit_at_cell(cell)
-		if not built_floor:
-			return false
-		revealed_floor_cells[cell_key] = {
-			"built_floor": true,
-		}
-		built_floor.visible = false
-		_ensure_revealed_floor_overlay(cell, cell_key)
-		_refresh_underfloor_visibility()
-		_update_layer_plane_visuals(active_build_view_layer)
-		return true
-	var orientation := grid_map.get_cell_item_orientation(cell)
+	if story_level == 1 and floor_kind == "ground":
+		var item := grid_map.get_cell_item(cell)
+		if item >= 0:
+			var orientation := grid_map.get_cell_item_orientation(cell)
+			revealed_floor_cells[cell_key] = {
+				"item": item,
+				"orientation": orientation,
+				"story_level": story_level,
+				"floor_kind": floor_kind,
+				"reveal_view_layer": StoryLevels.get_reveal_view_layer(floor_kind),
+			}
+			grid_map.set_cell_item(cell, -1)
+			_ensure_revealed_floor_overlay(cell, cell_key, story_level, floor_kind)
+			_refresh_underfloor_visibility()
+			_update_layer_plane_visuals(active_build_view_layer)
+			return true
+	var target_floor := _find_built_floor_unit_at_cell(cell, story_level, floor_kind)
+	if not target_floor:
+		return false
 	revealed_floor_cells[cell_key] = {
-		"item": item,
-		"orientation": orientation,
+		"built_floor": true,
+		"story_level": story_level,
+		"floor_kind": floor_kind,
+		"reveal_view_layer": StoryLevels.get_reveal_view_layer(floor_kind),
 	}
-	grid_map.set_cell_item(cell, -1)
-	_ensure_revealed_floor_overlay(cell, cell_key)
+	target_floor.visible = false
+	_ensure_revealed_floor_overlay(cell, cell_key, story_level, floor_kind)
 	_refresh_underfloor_visibility()
 	_update_layer_plane_visuals(active_build_view_layer)
 	return true
 
-func register_built_floor_cell(cell: Vector3i) -> void:
-	_register_built_floor_cell_internal(cell, true)
+func register_built_floor_cell(cell: Vector3i, story_level: int = 1, floor_kind: String = "ground", skip_l1_sync: bool = false) -> void:
+	_register_built_floor_cell_internal(cell, story_level, floor_kind, true)
+	_after_ground_floor_registry_changed(story_level, floor_kind, skip_l1_sync)
 
-func register_built_floor_cells(cells: Array) -> void:
+func register_built_floor_cells(cells: Array, story_level: int = 1, floor_kind: String = "ground", skip_l1_sync: bool = false) -> void:
 	for cell in cells:
-		_register_built_floor_cell_internal(cell as Vector3i, false)
+		_register_built_floor_cell_internal(cell as Vector3i, story_level, floor_kind, false)
 	_rebuild_dirty_built_floor_grid_overlays()
 	if not revealed_floor_cells.is_empty():
 		_refresh_underfloor_visibility()
 	_update_built_floor_grid_overlay_visibility()
+	_after_ground_floor_registry_changed(story_level, floor_kind, skip_l1_sync)
 
-func register_built_floor_unit(cell: Vector3i, unit: Node3D) -> void:
+func _after_ground_floor_registry_changed(story_level: int, floor_kind: String, skip_l1_sync: bool) -> void:
+	if StoryLevels.normalize_floor_kind(floor_kind) != "ground":
+		return
+	if story_level == 1 and not skip_l1_sync:
+		_sync_all_story_ground_floors_from_l1()
+	else:
+		_refresh_mezzanine_air_walls_for_all_stories()
+
+func register_built_floor_unit(cell: Vector3i, unit: Node3D, story_level: int = 1, floor_kind: String = "ground") -> void:
 	_ensure_built_floor_overlay_state()
 	cell.y = 0
-	built_floor_units_by_cell[_floor_cell_key(cell)] = unit
+	built_floor_units_by_cell[_floor_cell_key(story_level, cell, floor_kind)] = unit
+	if StoryLevels.normalize_floor_kind(floor_kind) == "ceiling":
+		call_deferred("_update_indoor_lighting_for_camera")
 
-func _register_built_floor_cell_internal(cell: Vector3i, refresh_after: bool) -> void:
+func _register_built_floor_cell_internal(cell: Vector3i, story_level: int, floor_kind: String, refresh_after: bool) -> void:
 	_ensure_built_floor_overlay_state()
 	if not grid_map:
 		return
 	cell.y = 0
-	_ensure_built_floor_grid_overlay(cell, -1)
-	_ensure_built_floor_grid_overlay(cell, 1)
+	var reveal_layer := StoryLevels.get_reveal_view_layer(floor_kind)
+	_ensure_built_floor_grid_overlay(cell, reveal_layer, story_level)
 	if refresh_after:
 		if not revealed_floor_cells.is_empty():
 			_refresh_underfloor_visibility()
@@ -924,12 +1286,18 @@ func restore_built_floor_cells_from_layout() -> void:
 			continue
 		var cell := _get_built_floor_cell_for_node(node)
 		var layer := int(node.get_meta("build_view_layer", 0))
+		var story := StoryLevels.normalize_story_level(node.get_meta("story_level", 1), building_story_count)
+		var floor_kind := StoryLevels.normalize_floor_kind(node.get_meta("floor_kind", "ground"))
 		building_controller.restore_floor_unit(node, grid_map, layer, cell)
-		register_built_floor_unit(cell, node)
-		_register_built_floor_cell_internal(cell, false)
+		register_built_floor_unit(cell, node, story, floor_kind)
+		_register_built_floor_cell_internal(cell, story, floor_kind, false)
 	if not revealed_floor_cells.is_empty():
 		_refresh_underfloor_visibility()
 	_update_built_floor_grid_overlay_visibility()
+	_refresh_mezzanine_air_walls_for_all_stories()
+	_update_indoor_lighting_for_camera()
+	if _has_l1_ground_reference():
+		call_deferred("_sync_all_story_ground_floors_from_l1")
 
 func _get_built_floor_cell_for_node(node: Node3D) -> Vector3i:
 	if node.has_meta("floor_cell_x") and node.has_meta("floor_cell_z"):
@@ -958,22 +1326,23 @@ func _reset_floor_runtime_overlay_state() -> void:
 	revealed_floor_overlays.clear()
 	revealed_floor_cells.clear()
 
-func unregister_built_floor_cell(cell: Vector3i) -> void:
+func unregister_built_floor_cell(cell: Vector3i, story_level: int = 1, floor_kind: String = "ground", skip_l1_sync: bool = false) -> void:
 	_ensure_built_floor_overlay_state()
 	cell.y = 0
-	var cell_key := "%d,%d,%d" % [cell.x, cell.y, cell.z]
+	var cell_key := _reveal_cell_key(story_level, cell, floor_kind)
 	if revealed_floor_cells.has(cell_key):
 		revealed_floor_cells.erase(cell_key)
 		_remove_revealed_floor_overlay(cell_key)
-	built_floor_units_by_cell.erase(_floor_cell_key(cell))
-	_remove_built_floor_grid_overlay(cell, -1)
-	_remove_built_floor_grid_overlay(cell, 1)
+	built_floor_units_by_cell.erase(_floor_cell_key(story_level, cell, floor_kind))
+	var reveal_layer := StoryLevels.get_reveal_view_layer(floor_kind)
+	_remove_built_floor_grid_overlay(cell, reveal_layer, story_level)
 	_refresh_underfloor_visibility()
+	_after_ground_floor_registry_changed(story_level, floor_kind, skip_l1_sync)
 
-func _find_built_floor_unit_at_cell(cell: Vector3i) -> Node3D:
+func _find_built_floor_unit_at_cell(cell: Vector3i, story_level: int = 1, floor_kind: String = "ground") -> Node3D:
 	_ensure_built_floor_overlay_state()
 	cell.y = 0
-	var cell_key := _floor_cell_key(cell)
+	var cell_key := _floor_cell_key(story_level, cell, floor_kind)
 	if built_floor_units_by_cell.has(cell_key):
 		var cached := built_floor_units_by_cell[cell_key] as Node3D
 		if is_instance_valid(cached):
@@ -985,15 +1354,29 @@ func _find_built_floor_unit_at_cell(cell: Vector3i) -> Node3D:
 		var node := child as Node3D
 		if not bool(node.get_meta("cell_line_unit", false)):
 			continue
-		if int(node.get_meta("build_view_layer", 0)) != 0:
+		if StoryLevels.normalize_story_level(node.get_meta("story_level", 1), building_story_count) != story_level:
+			continue
+		if str(node.get_meta("floor_kind", "ground")) != floor_kind:
 			continue
 		if int(node.get_meta("floor_cell_x", 999999)) == cell.x and int(node.get_meta("floor_cell_z", 999999)) == cell.z:
 			built_floor_units_by_cell[cell_key] = node
 			return node
 	return null
 
-func _floor_cell_key(cell: Vector3i) -> String:
-	return "%d,%d,%d" % [cell.x, 0, cell.z]
+func _floor_cell_key(story_level: int, cell: Vector3i, floor_kind: String) -> String:
+	return "%d,%d,%d,%s" % [story_level, cell.x, cell.z, floor_kind]
+
+func _reveal_cell_key(story_level: int, cell: Vector3i, floor_kind: String) -> String:
+	return _floor_cell_key(story_level, cell, floor_kind)
+
+func _get_camera_cursor_hit(camera: Camera3D) -> Dictionary:
+	if not camera:
+		return {}
+	var mouse_pos := get_viewport().get_mouse_position()
+	var from := camera.project_ray_origin(mouse_pos)
+	var to := from + camera.project_ray_normal(mouse_pos) * 1000.0
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	return get_world_3d().direct_space_state.intersect_ray(query)
 
 
 func _refresh_underfloor_visibility() -> void:
@@ -1002,16 +1385,21 @@ func _refresh_underfloor_visibility() -> void:
 	if not grid_map:
 		return
 	var target_visible := {}
-	for cell_key in revealed_floor_cells.keys():
-		if not underfloor_nodes_by_cell.has(cell_key):
+	for reveal_key in revealed_floor_cells.keys():
+		var saved := revealed_floor_cells[reveal_key] as Dictionary
+		var story := StoryLevels.normalize_story_level(saved.get("story_level", 1), building_story_count)
+		var reveal_layer := int(saved.get("reveal_view_layer", StoryLevels.get_reveal_view_layer(str(saved.get("floor_kind", "ground")))))
+		var cell := _parse_reveal_key_to_cell(reveal_key)
+		var lookup_key := _reveal_layer_cell_key(story, reveal_layer, cell.x, cell.z)
+		if not underfloor_nodes_by_cell.has(lookup_key):
 			continue
-		var cell_nodes := underfloor_nodes_by_cell[cell_key] as Dictionary
+		var cell_nodes := underfloor_nodes_by_cell[lookup_key] as Dictionary
 		for node_id in cell_nodes.keys():
 			var node := cell_nodes[node_id] as Node3D
 			if not is_instance_valid(node):
 				cell_nodes.erase(node_id)
 				continue
-			if _node_overlaps_floor_cell(node, _cell_key_to_vec3i(cell_key)):
+			if _node_overlaps_floor_cell(node, cell):
 				target_visible[node_id] = node
 	for node_id in visible_underfloor_nodes.keys():
 		if target_visible.has(node_id):
@@ -1029,10 +1417,16 @@ func _refresh_underfloor_visibility() -> void:
 
 func _node_overlaps_any_revealed_floor_cell(node: Node3D) -> bool:
 	_ensure_revealed_floor_state()
-	for cell_key in revealed_floor_cells.keys():
-		if _node_overlaps_floor_cell(node, _cell_key_to_vec3i(cell_key)):
+	for reveal_key in revealed_floor_cells.keys():
+		if _node_overlaps_floor_cell(node, _parse_reveal_key_to_cell(reveal_key)):
 			return true
 	return false
+
+func _parse_reveal_key_to_cell(reveal_key: String) -> Vector3i:
+	var parts := reveal_key.split(",")
+	if parts.size() < 3:
+		return Vector3i.ZERO
+	return Vector3i(int(parts[1]), 0, int(parts[2]))
 
 func _node_overlaps_floor_cell(node: Node3D, cell: Vector3i) -> bool:
 	var node_bounds := _get_node_world_xz_bounds(node)
@@ -1097,20 +1491,15 @@ func _get_aabb_corners(aabb: AABB) -> Array[Vector3]:
 		position + size,
 	]
 
-func _cell_key_to_vec3i(cell_key: String) -> Vector3i:
-	var parts := cell_key.split(",")
-	if parts.size() != 3:
-		return Vector3i.ZERO
-	return Vector3i(int(parts[0]), int(parts[1]), int(parts[2]))
-
-func _ensure_revealed_floor_overlay(cell: Vector3i, cell_key: String) -> void:
+func _ensure_revealed_floor_overlay(cell: Vector3i, cell_key: String, story_level: int, floor_kind: String) -> void:
 	_ensure_revealed_floor_state()
 	if revealed_floor_overlays.has(cell_key) or not grid_map:
 		return
 	var overlay_root := Node3D.new()
 	overlay_root.name = "RevealedFloorOverlay_%s" % cell_key.replace(",", "_")
 	var cell_center_global := grid_map.to_global(grid_map.map_to_local(cell))
-	overlay_root.global_position = Vector3(cell_center_global.x, _get_view_layer_plane_y(-1), cell_center_global.z)
+	var reveal_layer := StoryLevels.get_reveal_view_layer(floor_kind)
+	overlay_root.global_position = Vector3(cell_center_global.x, _get_view_layer_plane_y(reveal_layer, story_level), cell_center_global.z)
 
 	var grid_overlay := MeshInstance3D.new()
 	grid_overlay.mesh = _get_single_cell_grid_mesh()
@@ -1121,77 +1510,98 @@ func _ensure_revealed_floor_overlay(cell: Vector3i, cell_key: String) -> void:
 	revealed_floor_overlays[cell_key] = overlay_root
 	add_child(overlay_root)
 
-func _ensure_built_floor_grid_overlay(cell: Vector3i, layer: int) -> void:
+func _ensure_built_floor_grid_overlay(cell: Vector3i, layer: int, story_level: int) -> void:
 	_ensure_built_floor_overlay_state()
 	if not grid_map:
 		return
-	var overlay_key := _built_floor_overlay_key(cell, layer)
+	var overlay_key := _built_floor_overlay_key(cell, layer, story_level)
 	if built_floor_grid_cells.has(overlay_key):
 		return
 	built_floor_grid_cells[overlay_key] = Vector3i(cell.x, 0, cell.z)
-	built_floor_grid_dirty_layers[layer] = true
-	_ensure_built_floor_layer_overlay(layer)
+	var dirty_key := _built_floor_overlay_dirty_key(layer, story_level)
+	built_floor_grid_dirty_layers[dirty_key] = true
+	_ensure_built_floor_layer_overlay(layer, story_level)
 
 func _update_built_floor_grid_overlay_visibility() -> void:
 	_ensure_built_floor_overlay_state()
 	_rebuild_dirty_built_floor_grid_overlays()
-	for layer_key in built_floor_grid_overlays.keys():
-		var overlay := built_floor_grid_overlays[layer_key] as MeshInstance3D
+	for overlay_key in built_floor_grid_overlays.keys():
+		var overlay := built_floor_grid_overlays[overlay_key] as MeshInstance3D
 		if not overlay:
 			continue
-		var layer := int(layer_key)
-		overlay.visible = camera_mode_name == "side" or layer == active_build_view_layer
+		var parts := str(overlay_key).split(",")
+		var layer := int(parts[0]) if parts.size() > 0 else 0
+		var story := int(parts[1]) if parts.size() > 1 else active_story_level
+		overlay.visible = _is_story_layer_visible(layer, story)
 
-func _remove_built_floor_grid_overlay(cell: Vector3i, layer: int) -> void:
+func _remove_built_floor_grid_overlay(cell: Vector3i, layer: int, story_level: int) -> void:
 	_ensure_built_floor_overlay_state()
-	var overlay_key := _built_floor_overlay_key(cell, layer)
+	var overlay_key := _built_floor_overlay_key(cell, layer, story_level)
 	if not built_floor_grid_cells.has(overlay_key):
 		return
 	built_floor_grid_cells.erase(overlay_key)
-	built_floor_grid_dirty_layers[layer] = true
+	built_floor_grid_dirty_layers[_built_floor_overlay_dirty_key(layer, story_level)] = true
 	_rebuild_dirty_built_floor_grid_overlays()
 
-func _built_floor_overlay_key(cell: Vector3i, layer: int) -> String:
-	return "%d,%d,%d" % [layer, cell.x, cell.z]
+func _built_floor_overlay_key(cell: Vector3i, layer: int, story_level: int) -> String:
+	return "%d,%d,%d,%d" % [layer, story_level, cell.x, cell.z]
 
-func _get_built_floor_overlay_y(layer: int) -> float:
+func _built_floor_overlay_dirty_key(layer: int, story_level: int) -> String:
+	return "%d,%d" % [layer, story_level]
+
+func _get_built_floor_overlay_y(layer: int, story_level: int) -> float:
 	if layer == 0 and grid_map:
-		return grid_map.global_position.y + grid_map.cell_size.y
-	return _get_view_layer_plane_y(layer)
+		return StoryLevels.get_floor_kind_y(story_level, "ground", _get_l1_grid_floor_top_y())
+	return _get_view_layer_plane_y(layer, story_level)
 
-func _ensure_built_floor_layer_overlay(layer: int) -> MeshInstance3D:
+func _ensure_built_floor_layer_overlay(layer: int, story_level: int) -> MeshInstance3D:
 	_ensure_built_floor_overlay_state()
-	if built_floor_grid_overlays.has(layer):
-		return built_floor_grid_overlays[layer] as MeshInstance3D
+	var overlay_key := _built_floor_overlay_dirty_key(layer, story_level)
+	if built_floor_grid_overlays.has(overlay_key):
+		return built_floor_grid_overlays[overlay_key] as MeshInstance3D
 	var overlay := MeshInstance3D.new()
-	overlay.name = "BuiltFloorGridOverlay_Layer_%d" % layer
+	overlay.name = "BuiltFloorGridOverlay_L%d_V%d" % [story_level, layer]
 	overlay.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	overlay.material_override = _get_built_floor_overlay_material()
 	overlay.set_meta("build_view_layer", layer)
-	overlay.visible = camera_mode_name == "side" or layer == active_build_view_layer
-	built_floor_grid_overlays[layer] = overlay
+	overlay.set_meta("story_level", story_level)
+	overlay.visible = _is_story_layer_visible(layer, story_level)
+	built_floor_grid_overlays[overlay_key] = overlay
 	add_child(overlay)
 	return overlay
 
+func _is_story_layer_visible(view_layer: int, story_level: int = -1) -> bool:
+	if camera_mode_name == "side":
+		return true
+	if camera_mode_name == "building_overview":
+		return view_layer == active_build_view_layer
+	if story_level < 1:
+		story_level = active_story_level
+	return view_layer == active_build_view_layer and story_level == active_story_level
+
 func _rebuild_dirty_built_floor_grid_overlays() -> void:
 	_ensure_built_floor_overlay_state()
-	for layer_key in built_floor_grid_dirty_layers.keys():
-		var layer := int(layer_key)
-		var overlay := _ensure_built_floor_layer_overlay(layer)
-		overlay.mesh = _build_built_floor_layer_grid_mesh(layer)
+	for dirty_key in built_floor_grid_dirty_layers.keys():
+		var parts := str(dirty_key).split(",")
+		var layer := int(parts[0]) if parts.size() > 0 else 0
+		var story := int(parts[1]) if parts.size() > 1 else active_story_level
+		var overlay := _ensure_built_floor_layer_overlay(layer, story)
+		overlay.mesh = _build_built_floor_layer_grid_mesh(layer, story)
 	built_floor_grid_dirty_layers.clear()
 
-func _build_built_floor_layer_grid_mesh(layer: int) -> ArrayMesh:
+func _build_built_floor_layer_grid_mesh(layer: int, story_level: int) -> ArrayMesh:
 	if not grid_map:
 		return null
 	var vertices := PackedVector3Array()
 	var colors := PackedColorArray()
 	var half_x := grid_map.cell_size.x * 0.5
 	var half_z := grid_map.cell_size.z * 0.5
-	var y := to_local(Vector3(0.0, _get_built_floor_overlay_y(layer) + LAYER_GRID_ELEVATION, 0.0)).y
+	var y := to_local(Vector3(0.0, _get_built_floor_overlay_y(layer, story_level) + LAYER_GRID_ELEVATION, 0.0)).y
 	for overlay_key in built_floor_grid_cells.keys():
 		var parts := str(overlay_key).split(",")
-		if parts.size() != 3 or int(parts[0]) != layer:
+		if parts.size() != 4:
+			continue
+		if int(parts[0]) != layer or int(parts[1]) != story_level:
 			continue
 		var cell := built_floor_grid_cells[overlay_key] as Vector3i
 		var center := to_local(grid_map.to_global(grid_map.map_to_local(cell)))

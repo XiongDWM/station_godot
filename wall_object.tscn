@@ -9,10 +9,10 @@ roughness = 0.9
 
 [sub_resource type="BoxMesh" id="BoxMesh_kxkg7"]
 material = SubResource("StandardMaterial3D_7lqbf")
-size = Vector3(1, 2, 0.2)
+size = Vector3(1, 2.5, 0.2)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_7lqbf"]
-size = Vector3(1, 2, 0.2)
+size = Vector3(1, 2.5, 0.2)
 
 [node name="WallObject" type="StaticBody3D" unique_id=16275737]
 script = ExtResource("1_wall_controller")
