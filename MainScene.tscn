@@ -20,6 +20,7 @@
 [ext_resource type="MeshLibrary" uid="uid://b057cvmxg3wmq" path="res://BrickAndFloorLibrary.tres" id="17_8s4c3"]
 [ext_resource type="Script" uid="uid://rexah5buk4w2" path="res://scripts/manager/hose_manager.gd" id="19_3slyh"]
 [ext_resource type="PackedScene" uid="uid://ytdai8slxuk1" path="res://hose_object.tscn" id="20_xtmsi"]
+[ext_resource type="PackedScene" path="res://hose_baked_object.tscn" id="21_hose_baked"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_x4av3"]
 
@@ -54,7 +55,7 @@ size = Vector3(0.8, 2, 0.8)
 material = SubResource("StandardMaterial3D_x4av3")
 size = Vector3(1, 2.5, 0.2)
 
-[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "btn_cube", "btn_rack", "btn_wall", "preview_cube", "preview_rack", "preview_wall", "module_panel", "operation_panel", "btn_rotate", "btn_delete", "btn_save", "story_count_spin", "story_count_save_button", "story_level_button", "left_menu_panel", "build_panel", "http_request", "btn_door", "btn_pipeline", "preview_ac", "btn_floor", "btn_view_layer", "preview_pipe", "runtime_pipe_button", "runtime_trench_button", "runtime_view_layer_button")]
+[node name="MainScene" type="Node3D" unique_id=1615405439 node_paths=PackedStringArray("grid_map", "btn_cube", "btn_rack", "btn_wall", "preview_cube", "preview_rack", "preview_wall", "module_panel", "operation_panel", "btn_rotate", "btn_delete", "btn_save", "story_count_spin", "story_count_save_button", "story_level_button", "left_menu_panel", "build_panel", "http_request", "btn_door", "btn_pipeline", "preview_ac", "btn_floor", "btn_view_layer", "preview_pipe", "runtime_pipe_button", "runtime_trench_button", "runtime_view_layer_button", "btn_hose", "hose_manager")]
 script = ExtResource("1_rf2cd")
 ground_base_color = Color(0.7019608, 0.7411765, 0.78039217, 1)
 grid_map = NodePath("GridMap")
@@ -91,6 +92,8 @@ runtime_pipe_button = NodePath("CanvasLayer/BuildPanel/btn_runtime_pipe")
 trench_scene = ExtResource("4_trench_scene")
 runtime_trench_button = NodePath("CanvasLayer/BuildPanel/btn_runtime_trench")
 runtime_view_layer_button = NodePath("CanvasLayer/Panel/btn_runtime_view_layer")
+btn_hose = NodePath("CanvasLayer/BuildPanel/btn_hose")
+hose_manager = NodePath("HoseManager")
 
 [node name="DoorObject" parent="." unique_id=1342906246 instance=ExtResource("4_5crlr")]
 visible = false
@@ -511,7 +514,7 @@ offset_top = 3.0801277
 offset_right = 201.14441
 offset_bottom = 139.08012
 scale = Vector2(0.06182063, 0.05689597)
-tooltip_text = "贴墙竖管"
+tooltip_text = "软管"
 expand_icon = true
 
 [node name="btn_runtime_pipe" type="Button" parent="CanvasLayer/BuildPanel" unique_id=1270783067]
@@ -614,3 +617,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1.0000001, 0, 0, 0)
 [node name="HoseManager" type="Node3D" parent="." unique_id=2119392774]
 script = ExtResource("19_3slyh")
 hose_section_scene = ExtResource("20_xtmsi")
+hose_baked_scene = ExtResource("21_hose_baked")
+hose_sag_amount = 0.1
+hose_bend_stiffness = 0.85
+hose_settle_speed = 4.0
+collision_radius_scale = 1.2

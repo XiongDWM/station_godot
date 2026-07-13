@@ -98,6 +98,9 @@ func deserialize_json_to_scene(json_string: String, root: Node, excluded_group: 
 
 func deserialize_items_to_scene(data: Array, root: Node, excluded_group: String = "preview") -> void:
 	_clear_scene(root, excluded_group)
+	var hose_manager := root.get_node_or_null("HoseManager")
+	if hose_manager and hose_manager.has_method("clear_all_hoses"):
+		hose_manager.call("clear_all_hoses")
 	for item in data:
 		_instantiate_item(item, root)
 	call_deferred("_finalize_deserialized_nodes", root)

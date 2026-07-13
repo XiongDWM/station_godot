@@ -42,6 +42,9 @@ func bootstrap() -> void:
 func save_layoutdata() -> String:
 	if not root or not layout_serializer:
 		return ""
+	var hose_manager := root.get_node_or_null("HoseManager")
+	if hose_manager and hose_manager.has_method("prepare_for_serialize"):
+		hose_manager.call("prepare_for_serialize")
 	_ensure_layout_node_ids()
 	var layout_meta := {}
 	if root.has_method("get_layout_scene_meta"):

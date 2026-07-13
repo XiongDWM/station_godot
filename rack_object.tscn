@@ -7,6 +7,8 @@
 size = Vector3(0.6, 1.8, 1)
 
 [node name="RackObject" type="StaticBody3D" unique_id=1761603802]
+collision_layer = 1
+collision_mask = 1
 script = ExtResource("1_odf_controller")
 default_odf_type = 1
 enable_open_animation = false
@@ -16,7 +18,7 @@ shape = SubResource("BoxShape3D_rack_collision")
 
 [node name="object_odf" parent="." unique_id=1051542727 instance=ExtResource("2_0uthi")]
 
-[node name="rack_entrance" type="Node3D" parent="object_odf" unique_id=378907940]
+[node name="rack_entrance_dummy" type="Node3D" parent="object_odf" unique_id=378907940]
 unique_name_in_owner = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9020698, -0.3481955)
 

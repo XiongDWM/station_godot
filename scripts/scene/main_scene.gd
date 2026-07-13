@@ -78,6 +78,8 @@ const VIEW_LAYER_Y := StoryLevels.VIEW_LAYER_OFFSET
 @export var trench_scene: PackedScene
 @export var runtime_trench_button: Button
 @export var runtime_view_layer_button: Button
+@export var btn_hose: Button
+@export var hose_manager: Node3D
 
 
 var building_controller := BuildingControllerScript.new()
@@ -152,6 +154,8 @@ func _ready():
 	building_controller.bind_buttons(btn_cube, btn_rack, btn_wall, btn_door, btn_floor, runtime_pipe_button, runtime_trench_button, block_scene, rack_scene, wall_scene, door_scene, floor_brick_scene, pipe_scene, trench_scene, preview_cube, preview_rack, preview_wall, preview_ac, runtime_preview_pipe, self, &"_on_building_mode_selected")
 	if btn_pipeline:
 		btn_pipeline.pressed.connect(_on_building_mode_selected.bind(pipe_scene, runtime_preview_pipe, "wall_line"))
+	if btn_hose:
+		btn_hose.pressed.connect(_on_hose_mode_selected)
 	building_controller.set_alternate_door_scene(door_alt_scene)
 	selection_controller.initialize(operation_panel, module_panel)
 	selection_controller.bind_buttons(btn_rotate, btn_delete, self, &"_on_rotate_selected_object", &"_on_delete_selected_object")
@@ -191,12 +195,30 @@ func _set_node_collision_enabled_recursive(node: Node, enabled: bool) -> void:
 
 func _on_building_mode_selected(scene: PackedScene, preview: MeshInstance3D, placement_mode: String = "point"):
 	# print("[MainScene._on_building_mode_selected] scene=", scene, ", preview=", preview)
+	_cancel_hose_build_mode()
 	_configure_runtime_line_preview(scene, preview)
 	building_controller.set_building_mode(scene, preview, operation_panel, module_panel, placement_mode)
 	if scene and scene.resource_path == "res://floor_brick.tscn":
 		update_floor_build_tooltip(building_controller.get_floor_kind_label(), building_controller.get_active_story_level())
 	if scene and scene.resource_path == "res://door_object.tscn":
 		update_door_build_tooltip(building_controller.get_door_variant_label())
+
+func _on_hose_mode_selected() -> void:
+	if building_controller.is_active():
+		building_controller.cancel_build_mode()
+	if operation_panel:
+		operation_panel.visible = false
+	if module_panel:
+		if module_panel.has_method("close_for_current_target"):
+			module_panel.call("close_for_current_target")
+		else:
+			module_panel.visible = false
+	if hose_manager and hose_manager.has_method("toggle_build_mode"):
+		hose_manager.call("toggle_build_mode")
+
+func _cancel_hose_build_mode() -> void:
+	if hose_manager and hose_manager.has_method("cancel_build_mode"):
+		hose_manager.call("cancel_build_mode")
 
 func update_door_build_tooltip(variant_label: String) -> void:
 	if btn_door:
@@ -386,6 +408,9 @@ func _configure_build_toolbar() -> void:
 		btn_pipeline.tooltip_text = "贴墙竖管"
 		btn_pipeline.icon = pipe_button_icon
 		btn_pipeline.expand_icon = true
+	if btn_hose:
+		btn_hose.tooltip_text = "软管"
+		btn_hose.text = ""
 
 func _configure_view_layer_button() -> void:
 	if not runtime_view_layer_button:
@@ -504,6 +529,8 @@ func _update_build_toolbar_for_layer(layer: int) -> void:
 		btn_floor.visible = layer == 0
 	if btn_pipeline:
 		btn_pipeline.visible = layer == 0 or layer == 1 or layer == -1
+	if btn_hose:
+		btn_hose.visible = layer == 0
 	if btn_view_layer:
 		btn_view_layer.visible = not pipeline_layer
 	if runtime_pipe_button:
