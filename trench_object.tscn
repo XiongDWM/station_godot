@@ -14,7 +14,7 @@ size = Vector3(1, 1, 0.4)
 
 [sub_resource type="BoxMesh" id="BoxMesh_trench_side"]
 material = SubResource("StandardMaterial3D_trench")
-size = Vector3(0.15, 1, 0.75)
+size = Vector3(0.15, 1, 0.55)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_trench"]
 size = Vector3(0.8, 1, 0.9)

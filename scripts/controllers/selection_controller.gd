@@ -201,9 +201,14 @@ func _find_operation_target(node: Node) -> Node3D:
 	var current := node
 	while current:
 		if current.has_meta("cell_line_unit") and current.get_parent() is Node3D and current.get_parent().has_meta("cell_line_unit"):
-			return current.get_parent() as Node3D
+			current = current.get_parent()
 		if current is Node3D and _is_runtime_interactable(current):
-			return current as Node3D
+			var target := current as Node3D
+			if bool(target.get_meta("cell_line_unit", false)):
+				var scene_root := target.get_tree().current_scene
+				if scene_root and scene_root.has_method("is_selectable_floor_unit") and not scene_root.call("is_selectable_floor_unit", target):
+					return null
+			return target
 		current = current.get_parent()
 	return null
 

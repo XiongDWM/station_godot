@@ -15,3 +15,9 @@ enable_open_animation = false
 shape = SubResource("BoxShape3D_rack_collision")
 
 [node name="object_odf" parent="." unique_id=1051542727 instance=ExtResource("2_0uthi")]
+
+[node name="rack_entrance" type="Node3D" parent="object_odf" unique_id=378907940]
+unique_name_in_owner = true
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9020698, -0.3481955)
+
+[editable path="object_odf"]

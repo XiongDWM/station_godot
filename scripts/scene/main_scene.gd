@@ -30,6 +30,7 @@ const LAYER_GRID_GAP_LENGTH := 0.24
 const LAYER_GRID_ELEVATION := 0.02
 const SAVE_NOTIFICATION_DURATION_MS := 2600
 const STORY_CONTROL_ROW_HEIGHT_RATIO := 1.0 / 3.0
+const MEZZANINE_AIR_WALL_REFRESH_DELAY_SEC := 0.08
 const DEFAULT_BUILDING_STORY_COUNT := 3
 const ABSOLUTE_MAX_STORY_LEVEL := 99
 const VIEW_LAYER_Y := StoryLevels.VIEW_LAYER_OFFSET
@@ -78,6 +79,7 @@ const VIEW_LAYER_Y := StoryLevels.VIEW_LAYER_OFFSET
 @export var runtime_trench_button: Button
 @export var runtime_view_layer_button: Button
 
+
 var building_controller := BuildingControllerScript.new()
 var layout_serializer := LayoutSerializerScript.new()
 var layout_flow_controller := LayoutFlowControllerScript.new()
@@ -125,6 +127,10 @@ var cached_directional_energy := 0.92
 var scene_fill_lights: Array[OmniLight3D] = []
 var cached_fill_light_energies := {}
 var first_person_indoor_light: OmniLight3D
+var ceiling_lights: Array[OmniLight3D] = []
+var mezzanine_air_wall_refresh_pending := false
+var mezzanine_air_wall_refresh_token := 0
+var last_ground_base_camera_pos := Vector3(INF, INF, INF)
 
 func _ready():
 	# print("[MainScene._ready] btn_cube=", btn_cube, ", btn_wall=", btn_wall, ", preview_cube=", preview_cube, ", preview_wall=", preview_wall, ", block_scene=", block_scene, ", wall_scene=", wall_scene)
@@ -201,9 +207,15 @@ func update_floor_build_tooltip(floor_kind_label: String, story_level: int) -> v
 		btn_floor.tooltip_text = "地板 · %s · L%d/%d · ↑↓切换类型" % [floor_kind_label, story_level, building_story_count]
 
 func _process(_delta):
-	_update_ground_base_position()
-	_update_save_notification_visibility()
-	selection_controller.update_runtime_visuals(self, grid_map, operation_panel)
+	if ground_base:
+		_update_ground_base_position()
+	if save_notification_panel:
+		_update_save_notification_visibility()
+	var selected := selection_controller.selected_object
+	var needs_selection_visuals := selection_controller.is_move_mode_active() \
+		or (selected != null and is_instance_valid(selected))
+	if needs_selection_visuals:
+		selection_controller.update_runtime_visuals(self, grid_map, operation_panel)
 	if camera_mode_name == "side":
 		_update_side_view_layer_hover()
 	if selection_controller.is_move_mode_active():
@@ -249,6 +261,7 @@ func _unhandled_input(event):
 
 func refresh_build_view_state() -> void:
 	_apply_build_view_layer(active_build_view_layer)
+	_refresh_story_trench_positions()
 
 func show_save_notification(success: bool, message: String) -> void:
 	_ensure_save_notification()
@@ -415,7 +428,7 @@ func _configure_pipe_preview() -> void:
 func _configure_runtime_line_preview(scene: PackedScene, preview: MeshInstance3D) -> void:
 	if preview != runtime_preview_pipe or not scene:
 		return
-	if scene.resource_path == TRENCH_SCENE_PATH and active_build_view_layer == 1:
+	if scene.resource_path == TRENCH_SCENE_PATH and StoryLevels.uses_ceiling_tray_trench(active_build_view_layer):
 		preview.mesh = _build_ceiling_tray_preview_mesh()
 	elif scene.resource_path == TRENCH_SCENE_PATH:
 		preview.mesh = _build_trench_preview_mesh()
@@ -451,6 +464,23 @@ func _refresh_mezzanine_air_walls_for_all_stories() -> void:
 		return
 	building_controller.refresh_all_story_mezzanine_air_walls(self, grid_map, building_story_count)
 
+func _request_mezzanine_air_wall_refresh() -> void:
+	if mezzanine_air_wall_refresh_pending:
+		return
+	mezzanine_air_wall_refresh_pending = true
+	mezzanine_air_wall_refresh_token += 1
+	var token := mezzanine_air_wall_refresh_token
+	get_tree().create_timer(MEZZANINE_AIR_WALL_REFRESH_DELAY_SEC).timeout.connect(
+		func() -> void: _run_deferred_mezzanine_air_wall_refresh(token),
+		CONNECT_ONE_SHOT
+	)
+
+func _run_deferred_mezzanine_air_wall_refresh(token: int) -> void:
+	if token != mezzanine_air_wall_refresh_token:
+		return
+	mezzanine_air_wall_refresh_pending = false
+	_refresh_mezzanine_air_walls_for_all_stories()
+
 func _sync_all_story_ground_floors_from_l1() -> void:
 	if not grid_map or not floor_brick_scene:
 		return
@@ -462,7 +492,7 @@ func _sync_all_story_ground_floors_from_l1() -> void:
 	)
 	if changed > 0:
 		print("已从 L1 同步地面到全楼，变更 %d 处" % changed)
-	_refresh_mezzanine_air_walls_for_all_stories()
+	_request_mezzanine_air_wall_refresh()
 
 func _update_build_toolbar_for_layer(layer: int) -> void:
 	var pipeline_layer := layer != 0
@@ -473,7 +503,7 @@ func _update_build_toolbar_for_layer(layer: int) -> void:
 	if btn_floor:
 		btn_floor.visible = layer == 0
 	if btn_pipeline:
-		btn_pipeline.visible = layer == 0 or layer == 1
+		btn_pipeline.visible = layer == 0 or layer == 1 or layer == -1
 	if btn_view_layer:
 		btn_view_layer.visible = not pipeline_layer
 	if runtime_pipe_button:
@@ -492,9 +522,8 @@ func _enforce_build_mode_for_active_layer() -> void:
 		building_controller.cancel_build_mode()
 	elif active_build_view_layer == 1 and placement_mode == "cell_line":
 		building_controller.cancel_build_mode()
-	elif active_build_view_layer == -1 and placement_mode in ["point", "cell_line", "wall_line"]:
-		if building_controller.is_active():
-			building_controller.cancel_build_mode()
+	elif active_build_view_layer == -1 and placement_mode == "cell_line":
+		building_controller.cancel_build_mode()
 	elif active_build_view_layer != 0 and active_build_view_layer != 1 and placement_mode == "point" and building_controller.is_active():
 		building_controller.cancel_build_mode()
 
@@ -516,19 +545,41 @@ func get_building_overview_camera_state(fallback_focus: Vector3, fallback_distan
 	var bounds := _get_grid_bounds()
 	var center_x := fallback_focus.x
 	var center_z := fallback_focus.z
+	var extent := 16.0
 	if not bounds.is_empty():
 		center_x = float(bounds.get("center_x", center_x))
 		center_z = float(bounds.get("center_z", center_z))
-	var top_y := StoryLevels.get_story_base(building_story_count) + StoryLevels.CEILING_Y_OFFSET
-	var center_y := top_y * 0.5
-	var extent := maxf(maxf(float(bounds.get("width", 16.0)), float(bounds.get("depth", 16.0))), 16.0)
+		extent = maxf(maxf(float(bounds.get("width", 16.0)), float(bounds.get("depth", 16.0))), 12.0)
+	var vertical := _get_building_vertical_bounds()
+	var center_y := float(vertical.get("center", StoryLevels.CEILING_Y_OFFSET * 0.5))
+	var building_height := float(vertical.get("height", StoryLevels.STORY_HEIGHT))
+	var fit_span := maxf(extent, building_height)
 	var distance := maxf(
-		fallback_distance,
-		maxf(top_y * 1.45, extent * 1.35)
+		fallback_distance * 0.85,
+		fit_span * 1.08 + 4.0
 	)
 	return {
 		"focus": Vector3(center_x, center_y, center_z),
 		"distance": distance,
+	}
+
+func _get_building_vertical_bounds() -> Dictionary:
+	if not grid_map:
+		return {
+			"bottom": 0.0,
+			"top": StoryLevels.CEILING_Y_OFFSET,
+			"height": StoryLevels.CEILING_Y_OFFSET,
+			"center": StoryLevels.CEILING_Y_OFFSET * 0.5,
+		}
+	var cell_h := grid_map.cell_size.y
+	var bottom_y := grid_map_base_y + cell_h
+	var top_y := grid_map_base_y + StoryLevels.get_story_base(building_story_count) + StoryLevels.CEILING_Y_OFFSET + cell_h
+	var height := maxf(top_y - bottom_y, StoryLevels.STORY_HEIGHT)
+	return {
+		"bottom": bottom_y,
+		"top": top_y,
+		"height": height,
+		"center": bottom_y + height * 0.5,
 	}
 
 func get_layout_scene_meta() -> Dictionary:
@@ -630,6 +681,7 @@ func _apply_story_level(story_level: int) -> void:
 	if building_controller.is_active_floor_building():
 		update_floor_build_tooltip(building_controller.get_floor_kind_label(), active_story_level)
 	_update_story_count_ui()
+	_refresh_story_trench_positions(active_story_level)
 	print("切换到楼层 L%d/%d" % [active_story_level, building_story_count])
 
 func _try_sync_story_ground_from_l1(story_level: int) -> void:
@@ -673,13 +725,59 @@ func _apply_scene_layer_visibility() -> void:
 	for layer_key in runtime_layer_nodes.keys():
 		var layer := int(layer_key)
 		var nodes := runtime_layer_nodes[layer_key] as Dictionary
+		var stale_node_ids: Array = []
 		for node_id in nodes.keys():
-			var node := nodes[node_id] as Node3D
-			if not is_instance_valid(node):
-				nodes.erase(node_id)
+			var node_ref: Variant = nodes[node_id]
+			if not is_instance_valid(node_ref):
+				stale_node_ids.append(node_id)
 				continue
-			node.visible = _is_runtime_node_visible(node, layer)
+			var node := node_ref as Node3D
+			var node_visible := _get_runtime_unit_visible(node, layer)
+			node.visible = node_visible
+			_sync_floor_unit_ray_pickable(node, _should_floor_unit_be_pickable(node, layer))
+		for stale_node_id in stale_node_ids:
+			nodes.erase(stale_node_id)
 	_update_built_floor_grid_overlay_visibility()
+
+func _is_floor_cell_revealed_for_node(node: Node3D) -> bool:
+	if not node or not bool(node.get_meta("cell_line_unit", false)):
+		return false
+	_ensure_revealed_floor_state()
+	var story := StoryLevels.normalize_story_level(node.get_meta("story_level", 1), building_story_count)
+	var floor_kind := StoryLevels.normalize_floor_kind(node.get_meta("floor_kind", "ground"))
+	var cell := Vector3i(int(node.get_meta("floor_cell_x", 0)), 0, int(node.get_meta("floor_cell_z", 0)))
+	return revealed_floor_cells.has(_reveal_cell_key(story, cell, floor_kind))
+
+func _get_runtime_unit_visible(node: Node3D, view_layer: int) -> bool:
+	if _is_floor_cell_revealed_for_node(node):
+		return false
+	return _is_runtime_node_visible(node, view_layer)
+
+func _should_floor_unit_be_pickable(node: Node3D, view_layer: int) -> bool:
+	if not node or not bool(node.get_meta("cell_line_unit", false)):
+		return false
+	if _is_floor_cell_revealed_for_node(node):
+		return false
+	return _is_runtime_node_visible(node, view_layer)
+
+func _apply_floor_unit_revealed_visual(unit: Node3D, revealed: bool) -> void:
+	if not unit:
+		return
+	var layer := int(unit.get_meta("build_view_layer", 0))
+	var should_show := not revealed and _is_runtime_node_visible(unit, layer)
+	unit.visible = should_show
+	_sync_floor_unit_ray_pickable(unit, should_show)
+
+func _sync_floor_unit_ray_pickable(node: Node3D, enabled: bool) -> void:
+	if not node or not bool(node.get_meta("cell_line_unit", false)):
+		return
+	var body := node.get_node_or_null("FloorSelectionBody") as StaticBody3D
+	if not body:
+		return
+	body.input_ray_pickable = enabled
+	for child in body.get_children():
+		if child is CollisionShape3D:
+			(child as CollisionShape3D).disabled = not enabled
 
 func rebuild_runtime_scene_indexes() -> void:
 	_ensure_runtime_scene_index_state()
@@ -701,7 +799,22 @@ func register_runtime_layer_node(node: Node3D) -> void:
 		return
 	_register_runtime_layer_node_internal(node)
 	var layer := int(node.get_meta("build_view_layer", 0))
-	node.visible = _is_runtime_node_visible(node, layer)
+	var node_visible := _get_runtime_unit_visible(node, layer)
+	node.visible = node_visible
+	_sync_floor_unit_ray_pickable(node, _should_floor_unit_be_pickable(node, layer))
+
+func is_selectable_floor_unit(unit: Node3D) -> bool:
+	if not unit or not bool(unit.get_meta("cell_line_unit", false)):
+		return true
+	var story := StoryLevels.normalize_story_level(unit.get_meta("story_level", 1), building_story_count)
+	if story != active_story_level:
+		return false
+	if building_controller.is_active_floor_building():
+		var active_kind := building_controller.get_floor_kind()
+		var unit_kind := StoryLevels.normalize_floor_kind(unit.get_meta("floor_kind", "ground"))
+		if unit_kind != active_kind:
+			return false
+	return true
 
 func _is_ceiling_floor_node(node: Node3D) -> bool:
 	return bool(node.get_meta("cell_line_unit", false)) and StoryLevels.normalize_floor_kind(node.get_meta("floor_kind", "ground")) == "ceiling"
@@ -807,6 +920,10 @@ func _update_layer_plane_visuals(layer: int) -> void:
 	layer_grid_overlay.visible = layer != 0 and camera_mode_name != "side"
 	if layer != 0:
 		layer_grid_overlay.position.y = _get_view_layer_plane_y(layer) + LAYER_GRID_ELEVATION
+	for side_layer in side_view_layer_planes.keys():
+		var side_plane := side_view_layer_planes[side_layer] as MeshInstance3D
+		if side_plane:
+			side_plane.position.y = _get_view_layer_plane_y(int(side_layer)) + LAYER_GRID_ELEVATION
 	_update_side_view_layer_plane_visibility()
 	_update_built_floor_grid_overlay_visibility()
 
@@ -880,8 +997,12 @@ func _get_ground_base_position() -> Vector3:
 	)
 
 func _update_ground_base_position() -> void:
-	if not ground_base:
+	if not ground_base or not scene_camera:
 		return
+	var camera_pos := scene_camera.global_position
+	if last_ground_base_camera_pos.distance_squared_to(camera_pos) < 0.01:
+		return
+	last_ground_base_camera_pos = camera_pos
 	var next_position := _get_ground_base_position()
 	if ground_base.position.distance_squared_to(next_position) < 0.0001:
 		return
@@ -922,6 +1043,11 @@ func _get_grid_bounds() -> Dictionary:
 func _get_view_layer_plane_y(layer: int, story_level: int = -1) -> float:
 	if story_level < 1:
 		story_level = active_story_level
+	if not grid_map:
+		return StoryLevels.get_view_layer_y(story_level, layer)
+	var l1_top := _get_l1_grid_floor_top_y()
+	if StoryLevels.is_mezzanine_runtime_layer(layer):
+		return StoryLevels.get_mezzanine_work_plane_y(story_level, layer, l1_top)
 	return StoryLevels.get_view_layer_y(story_level, layer)
 
 func _setup_layer_grid_overlay() -> void:
@@ -1094,14 +1220,40 @@ func _update_indoor_lighting_for_camera() -> void:
 		fill_light.light_energy = base_energy * FIRST_PERSON_FILL_LIGHT_SCALE if first_person else base_energy
 	if first_person_indoor_light:
 		first_person_indoor_light.light_energy = FIRST_PERSON_INDOOR_LIGHT_ENERGY if first_person else 0.0
-	_apply_ceiling_light_energy_recursive(self, first_person)
+	_apply_ceiling_light_energy(first_person)
 
-func _apply_ceiling_light_energy_recursive(node: Node, enabled: bool) -> void:
-	if node is Light3D and bool(node.get_meta("ceiling_light", false)):
-		var stored_energy := float(node.get_meta("ceiling_light_energy", 1.45))
-		(node as Light3D).light_energy = stored_energy if enabled else 0.0
+func register_ceiling_light(light: OmniLight3D) -> void:
+	if not light or ceiling_lights.has(light):
+		return
+	ceiling_lights.append(light)
+	if not bool(light.get_meta("ceiling_light_registered", false)):
+		light.set_meta("ceiling_light_registered", true)
+		light.tree_exiting.connect(_on_ceiling_light_tree_exiting.bind(light))
+
+func unregister_ceiling_light(light: OmniLight3D) -> void:
+	ceiling_lights.erase(light)
+
+func _on_ceiling_light_tree_exiting(light: OmniLight3D) -> void:
+	unregister_ceiling_light(light)
+
+func rebuild_ceiling_light_registry() -> void:
+	ceiling_lights.clear()
+	_collect_ceiling_lights_recursive(self)
+
+func _collect_ceiling_lights_recursive(node: Node) -> void:
+	if node is OmniLight3D and bool(node.get_meta("ceiling_light", false)):
+		register_ceiling_light(node as OmniLight3D)
 	for child in node.get_children():
-		_apply_ceiling_light_energy_recursive(child, enabled)
+		_collect_ceiling_lights_recursive(child)
+
+func _apply_ceiling_light_energy(enabled: bool) -> void:
+	for i in range(ceiling_lights.size() - 1, -1, -1):
+		var light := ceiling_lights[i]
+		if not is_instance_valid(light):
+			ceiling_lights.remove_at(i)
+			continue
+		var stored_energy := float(light.get_meta("ceiling_light_energy", 1.45))
+		light.light_energy = stored_energy if enabled else 0.0
 
 func request_side_view_enter_layer(layer: int) -> void:
 	_apply_build_view_layer(layer)
@@ -1139,14 +1291,12 @@ func _toggle_first_person_floor_reveal_at_cursor() -> bool:
 		return false
 	var hit_result: Dictionary = _get_camera_cursor_hit(scene_camera)
 	if not hit_result.is_empty():
-		var collider: Variant = hit_result.get("collider")
-		if collider is StaticBody3D and collider.name == "FloorSelectionBody":
-			var body := collider as StaticBody3D
-			if bool(body.get_meta("revealable", true)):
-				var cell := Vector3i(int(body.get_meta("floor_cell_x", 0)), 0, int(body.get_meta("floor_cell_z", 0)))
-				var story := StoryLevels.normalize_story_level(body.get_meta("story_level", 1), building_story_count)
-				var floor_kind := StoryLevels.normalize_floor_kind(body.get_meta("floor_kind", "ground"))
-				return _toggle_floor_cell_reveal(cell, story, floor_kind)
+		var body := _resolve_floor_selection_body(hit_result.get("collider"))
+		if body and bool(body.get_meta("revealable", true)):
+			var cell := Vector3i(int(body.get_meta("floor_cell_x", 0)), 0, int(body.get_meta("floor_cell_z", 0)))
+			var story := StoryLevels.normalize_story_level(body.get_meta("story_level", 1), building_story_count)
+			var floor_kind := StoryLevels.normalize_floor_kind(body.get_meta("floor_kind", "ground"))
+			return _toggle_floor_cell_reveal(cell, story, floor_kind)
 	var sample_local: Vector3
 	var fallback_point :Variant= _intersect_cursor_with_story_floor_plane(scene_camera)
 	if fallback_point == null:
@@ -1186,6 +1336,8 @@ func _toggle_floor_cell_reveal(cell: Vector3i, story_level: int, floor_kind: Str
 	_ensure_revealed_floor_state()
 	if not grid_map:
 		return false
+	floor_kind = StoryLevels.normalize_floor_kind(floor_kind)
+	story_level = StoryLevels.normalize_story_level(story_level, building_story_count)
 	if not StoryLevels.is_revealable_floor_kind(floor_kind):
 		return false
 	cell.y = 0
@@ -1195,13 +1347,28 @@ func _toggle_floor_cell_reveal(cell: Vector3i, story_level: int, floor_kind: Str
 		if bool(saved.get("built_floor", false)):
 			var restored_floor := _find_built_floor_unit_at_cell(cell, story_level, floor_kind)
 			if restored_floor:
-				restored_floor.visible = true
+				_apply_floor_unit_revealed_visual(restored_floor, false)
 		elif story_level == 1 and floor_kind == "ground":
 			grid_map.set_cell_item(cell, int(saved.get("item", -1)), int(saved.get("orientation", 0)))
 		revealed_floor_cells.erase(cell_key)
 		_remove_revealed_floor_overlay(cell_key)
 		_refresh_underfloor_visibility()
 		_update_layer_plane_visuals(active_build_view_layer)
+		last_ground_base_camera_pos = Vector3.INF
+		return true
+	var target_floor := _find_built_floor_unit_at_cell(cell, story_level, floor_kind)
+	if target_floor:
+		revealed_floor_cells[cell_key] = {
+			"built_floor": true,
+			"story_level": story_level,
+			"floor_kind": floor_kind,
+			"reveal_view_layer": StoryLevels.get_reveal_view_layer(floor_kind),
+		}
+		_apply_floor_unit_revealed_visual(target_floor, true)
+		_ensure_revealed_floor_overlay(cell, cell_key, story_level, floor_kind)
+		_refresh_underfloor_visibility()
+		_update_layer_plane_visuals(active_build_view_layer)
+		last_ground_base_camera_pos = Vector3.INF
 		return true
 	if story_level == 1 and floor_kind == "ground":
 		var item := grid_map.get_cell_item(cell)
@@ -1218,21 +1385,24 @@ func _toggle_floor_cell_reveal(cell: Vector3i, story_level: int, floor_kind: Str
 			_ensure_revealed_floor_overlay(cell, cell_key, story_level, floor_kind)
 			_refresh_underfloor_visibility()
 			_update_layer_plane_visuals(active_build_view_layer)
+			last_ground_base_camera_pos = Vector3.INF
 			return true
-	var target_floor := _find_built_floor_unit_at_cell(cell, story_level, floor_kind)
-	if not target_floor:
-		return false
-	revealed_floor_cells[cell_key] = {
-		"built_floor": true,
-		"story_level": story_level,
-		"floor_kind": floor_kind,
-		"reveal_view_layer": StoryLevels.get_reveal_view_layer(floor_kind),
-	}
-	target_floor.visible = false
-	_ensure_revealed_floor_overlay(cell, cell_key, story_level, floor_kind)
-	_refresh_underfloor_visibility()
-	_update_layer_plane_visuals(active_build_view_layer)
-	return true
+	return false
+
+func _resolve_floor_selection_body(collider: Variant) -> StaticBody3D:
+	if collider is StaticBody3D and (collider as StaticBody3D).name == "FloorSelectionBody":
+		return collider as StaticBody3D
+	if collider is Node:
+		var current := collider as Node
+		while current:
+			if current is StaticBody3D and current.name == "FloorSelectionBody":
+				return current as StaticBody3D
+			if current is Node3D and bool(current.get_meta("cell_line_unit", false)):
+				var body := (current as Node3D).get_node_or_null("FloorSelectionBody") as StaticBody3D
+				if body:
+					return body
+			current = current.get_parent()
+	return null
 
 func register_built_floor_cell(cell: Vector3i, story_level: int = 1, floor_kind: String = "ground", skip_l1_sync: bool = false) -> void:
 	_register_built_floor_cell_internal(cell, story_level, floor_kind, true)
@@ -1253,7 +1423,7 @@ func _after_ground_floor_registry_changed(story_level: int, floor_kind: String, 
 	if story_level == 1 and not skip_l1_sync:
 		_sync_all_story_ground_floors_from_l1()
 	else:
-		_refresh_mezzanine_air_walls_for_all_stories()
+		_request_mezzanine_air_wall_refresh()
 
 func register_built_floor_unit(cell: Vector3i, unit: Node3D, story_level: int = 1, floor_kind: String = "ground") -> void:
 	_ensure_built_floor_overlay_state()
@@ -1291,13 +1461,24 @@ func restore_built_floor_cells_from_layout() -> void:
 		building_controller.restore_floor_unit(node, grid_map, layer, cell)
 		register_built_floor_unit(cell, node, story, floor_kind)
 		_register_built_floor_cell_internal(cell, story, floor_kind, false)
+		register_runtime_layer_node(node)
 	if not revealed_floor_cells.is_empty():
 		_refresh_underfloor_visibility()
 	_update_built_floor_grid_overlay_visibility()
 	_refresh_mezzanine_air_walls_for_all_stories()
+	rebuild_ceiling_light_registry()
 	_update_indoor_lighting_for_camera()
+	_refresh_story_trench_positions()
 	if _has_l1_ground_reference():
 		call_deferred("_sync_all_story_ground_floors_from_l1")
+
+func _refresh_story_trench_positions(story_level: int = -1) -> void:
+	if not grid_map:
+		return
+	if story_level > 0:
+		building_controller.reposition_trench_units(self, grid_map, story_level)
+	else:
+		building_controller.reposition_all_trench_units(self, grid_map)
 
 func _get_built_floor_cell_for_node(node: Node3D) -> Vector3i:
 	if node.has_meta("floor_cell_x") and node.has_meta("floor_cell_z"):
@@ -1342,6 +1523,8 @@ func unregister_built_floor_cell(cell: Vector3i, story_level: int = 1, floor_kin
 func _find_built_floor_unit_at_cell(cell: Vector3i, story_level: int = 1, floor_kind: String = "ground") -> Node3D:
 	_ensure_built_floor_overlay_state()
 	cell.y = 0
+	floor_kind = StoryLevels.normalize_floor_kind(floor_kind)
+	story_level = StoryLevels.normalize_story_level(story_level, building_story_count)
 	var cell_key := _floor_cell_key(story_level, cell, floor_kind)
 	if built_floor_units_by_cell.has(cell_key):
 		var cached := built_floor_units_by_cell[cell_key] as Node3D
@@ -1356,7 +1539,7 @@ func _find_built_floor_unit_at_cell(cell: Vector3i, story_level: int = 1, floor_
 			continue
 		if StoryLevels.normalize_story_level(node.get_meta("story_level", 1), building_story_count) != story_level:
 			continue
-		if str(node.get_meta("floor_kind", "ground")) != floor_kind:
+		if StoryLevels.normalize_floor_kind(node.get_meta("floor_kind", "ground")) != floor_kind:
 			continue
 		if int(node.get_meta("floor_cell_x", 999999)) == cell.x and int(node.get_meta("floor_cell_z", 999999)) == cell.z:
 			built_floor_units_by_cell[cell_key] = node
@@ -1394,24 +1577,29 @@ func _refresh_underfloor_visibility() -> void:
 		if not underfloor_nodes_by_cell.has(lookup_key):
 			continue
 		var cell_nodes := underfloor_nodes_by_cell[lookup_key] as Dictionary
+		var stale_node_ids: Array = []
 		for node_id in cell_nodes.keys():
-			var node := cell_nodes[node_id] as Node3D
-			if not is_instance_valid(node):
-				cell_nodes.erase(node_id)
+			var node_ref: Variant = cell_nodes[node_id]
+			if not is_instance_valid(node_ref):
+				stale_node_ids.append(node_id)
 				continue
+			var node := node_ref as Node3D
 			if _node_overlaps_floor_cell(node, cell):
 				target_visible[node_id] = node
+		for stale_node_id in stale_node_ids:
+			cell_nodes.erase(stale_node_id)
 	for node_id in visible_underfloor_nodes.keys():
 		if target_visible.has(node_id):
 			continue
-		var previous_node := visible_underfloor_nodes[node_id] as Node3D
-		if is_instance_valid(previous_node):
-			previous_node.visible = false
+		var previous_ref: Variant = visible_underfloor_nodes[node_id]
+		if is_instance_valid(previous_ref):
+			(previous_ref as Node3D).visible = false
 		visible_underfloor_nodes.erase(node_id)
 	for node_id in target_visible.keys():
-		var node := target_visible[node_id] as Node3D
-		if not is_instance_valid(node):
+		var node_ref: Variant = target_visible[node_id]
+		if not is_instance_valid(node_ref):
 			continue
+		var node := node_ref as Node3D
 		node.visible = true
 		visible_underfloor_nodes[node_id] = node
 
@@ -1499,7 +1687,7 @@ func _ensure_revealed_floor_overlay(cell: Vector3i, cell_key: String, story_leve
 	overlay_root.name = "RevealedFloorOverlay_%s" % cell_key.replace(",", "_")
 	var cell_center_global := grid_map.to_global(grid_map.map_to_local(cell))
 	var reveal_layer := StoryLevels.get_reveal_view_layer(floor_kind)
-	overlay_root.global_position = Vector3(cell_center_global.x, _get_view_layer_plane_y(reveal_layer, story_level), cell_center_global.z)
+	var overlay_y := _get_view_layer_plane_y(reveal_layer, story_level)
 
 	var grid_overlay := MeshInstance3D.new()
 	grid_overlay.mesh = _get_single_cell_grid_mesh()
@@ -1509,6 +1697,7 @@ func _ensure_revealed_floor_overlay(cell: Vector3i, cell_key: String, story_leve
 
 	revealed_floor_overlays[cell_key] = overlay_root
 	add_child(overlay_root)
+	overlay_root.global_position = Vector3(cell_center_global.x, overlay_y, cell_center_global.z)
 
 func _ensure_built_floor_grid_overlay(cell: Vector3i, layer: int, story_level: int) -> void:
 	_ensure_built_floor_overlay_state()

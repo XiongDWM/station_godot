@@ -18,6 +18,8 @@
 [ext_resource type="Texture2D" uid="uid://dl3dmg6i55mnl" path="res://assets/icons/floor_build.svg" id="6_floor_button_icon"]
 [ext_resource type="Script" uid="uid://b8vmx221wd551" path="res://scripts/controllers/odf_focus_preview_overlay.gd" id="7_preview_overlay"]
 [ext_resource type="MeshLibrary" uid="uid://b057cvmxg3wmq" path="res://BrickAndFloorLibrary.tres" id="17_8s4c3"]
+[ext_resource type="Script" uid="uid://rexah5buk4w2" path="res://scripts/manager/hose_manager.gd" id="19_3slyh"]
+[ext_resource type="PackedScene" uid="uid://ytdai8slxuk1" path="res://hose_object.tscn" id="20_xtmsi"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_x4av3"]
 
@@ -167,46 +169,44 @@ offset_right = 96.86859
 offset_bottom = 136.7031
 scale = Vector2(0.34, 0.395)
 
-[node name="StoryControlsColumn" type="VBoxContainer" parent="CanvasLayer/Panel"]
+[node name="StoryControlsColumn" type="VBoxContainer" parent="CanvasLayer/Panel" unique_id=1003925571]
 layout_mode = 0
 offset_left = 0.868592
-offset_top = 137.703094
+offset_top = 137.7031
 offset_right = 96.86859
-offset_bottom = 173.369427
+offset_bottom = 173.36943
 scale = Vector2(0.34, 0.395)
 theme_override_constants/separation = 1
 
-[node name="StoryCountRow" type="HBoxContainer" parent="CanvasLayer/Panel/StoryControlsColumn"]
+[node name="StoryCountRow" type="HBoxContainer" parent="CanvasLayer/Panel/StoryControlsColumn" unique_id=1174828507]
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 2
 
-[node name="StoryCountSpin" type="SpinBox" parent="CanvasLayer/Panel/StoryControlsColumn/StoryCountRow"]
+[node name="StoryCountSpin" type="SpinBox" parent="CanvasLayer/Panel/StoryControlsColumn/StoryCountRow" unique_id=1935880299]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
-theme_override_font_sizes/font_size = 9
+tooltip_text = "输入大楼总层数"
 min_value = 1.0
 max_value = 99.0
-step = 1.0
+value = 3.0
 rounded = true
 alignment = 1
-value = 3.0
-tooltip_text = "输入大楼总层数"
 
-[node name="StoryCountSaveButton" type="Button" parent="CanvasLayer/Panel/StoryControlsColumn/StoryCountRow"]
+[node name="StoryCountSaveButton" type="Button" parent="CanvasLayer/Panel/StoryControlsColumn/StoryCountRow" unique_id=1032001927]
 custom_minimum_size = Vector2(22, 0)
 layout_mode = 2
+tooltip_text = "保存总层数到场景"
 theme_override_font_sizes/font_size = 9
 text = "存"
-tooltip_text = "保存总层数到场景"
 
-[node name="StoryLevelButton" type="Button" parent="CanvasLayer/Panel/StoryControlsColumn"]
+[node name="StoryLevelButton" type="Button" parent="CanvasLayer/Panel/StoryControlsColumn" unique_id=1004835172]
 layout_mode = 2
 size_flags_vertical = 3
+tooltip_text = "切换当前建造楼层"
 theme_override_font_sizes/font_size = 9
 text = "L1/3"
-tooltip_text = "切换当前建造楼层"
 
 [node name="ModulePanel" type="Panel" parent="CanvasLayer" unique_id=252016293]
 anchors_preset = -1
@@ -489,9 +489,9 @@ expand_icon = true
 
 [node name="btn_ac" type="Button" parent="CanvasLayer/BuildPanel" unique_id=1071660490]
 layout_mode = 0
-offset_left = 63.69676
+offset_left = 80.48954
 offset_top = 3.3368042
-offset_right = 72.38268
+offset_right = 89.17547
 offset_bottom = 11.336804
 
 [node name="btn_pipeline" type="Button" parent="CanvasLayer/BuildPanel" unique_id=542771064]
@@ -500,6 +500,16 @@ offset_left = 50.0
 offset_top = 2.823452
 offset_right = 186.0
 offset_bottom = 138.82346
+scale = Vector2(0.06182063, 0.05689597)
+tooltip_text = "贴墙竖管"
+expand_icon = true
+
+[node name="btn_hose" type="Button" parent="CanvasLayer/BuildPanel" unique_id=82052246]
+layout_mode = 0
+offset_left = 65.14442
+offset_top = 3.0801277
+offset_right = 201.14441
+offset_bottom = 139.08012
 scale = Vector2(0.06182063, 0.05689597)
 tooltip_text = "贴墙竖管"
 expand_icon = true
@@ -600,3 +610,7 @@ script = ExtResource("5_rf2cd")
 
 [node name="Camera3D" type="Camera3D" parent="CameraPivot" unique_id=1427749111]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1.0000001, 0, 0, 0)
+
+[node name="HoseManager" type="Node3D" parent="." unique_id=2119392774]
+script = ExtResource("19_3slyh")
+hose_section_scene = ExtResource("20_xtmsi")

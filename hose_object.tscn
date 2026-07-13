@@ -1,0 +1,49 @@
+[gd_scene format=3 uid="uid://ytdai8slxuk1"]
+
+[ext_resource type="Script" uid="uid://07sd2se1m7kd" path="res://scripts/style/hose_section.gd" id="1_co0fi"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_co0fi"]
+albedo_color = Color(0.5411765, 0.5411765, 0.5411765, 1)
+metallic = 0.6
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_co0fi"]
+material = SubResource("StandardMaterial3D_co0fi")
+top_radius = 0.03
+bottom_radius = 0.03
+height = 0.003
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_n2oyb"]
+albedo_color = Color(0.5409902, 0.5409906, 0.5409905, 1)
+metallic = 0.6
+metallic_specular = 0.3
+metallic_texture_channel = 4
+roughness = 0.8
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_n2oyb"]
+material = SubResource("StandardMaterial3D_n2oyb")
+top_radius = 0.04
+bottom_radius = 0.04
+height = 0.01
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_n2oyb"]
+height = 0.016
+radius = 0.04
+
+[node name="HoseObject" type="Node3D" unique_id=630281660]
+
+[node name="hose_section" type="RigidBody3D" parent="." unique_id=997749946]
+script = ExtResource("1_co0fi")
+
+[node name="connect_part_top" type="MeshInstance3D" parent="hose_section" unique_id=526895198]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0066993907, 0)
+mesh = SubResource("CylinderMesh_co0fi")
+
+[node name="connect_part_bot" type="MeshInstance3D" parent="hose_section" unique_id=833213112]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.007, 0)
+mesh = SubResource("CylinderMesh_co0fi")
+
+[node name="mid_part" type="MeshInstance3D" parent="hose_section" unique_id=267215374]
+mesh = SubResource("CylinderMesh_n2oyb")
+
+[node name="collision_hose" type="CollisionShape3D" parent="hose_section" unique_id=1476518533]
+shape = SubResource("CylinderShape3D_n2oyb")

@@ -55,6 +55,7 @@ var door_alt_scene: PackedScene = null
 var current_door_variant_index := 0
 var door_preview_instance: Node3D = null
 var max_story_level := StoryLevels.DEFAULT_BUILDING_STORY_COUNT
+var mezzanine_air_wall_index: Dictionary = {}
 
 func initialize(preview_cube: MeshInstance3D, preview_wall: MeshInstance3D, preview_pipe: MeshInstance3D, preview_rack: MeshInstance3D = null, preview_floor: MeshInstance3D = null) -> void:
 	_prepare_preview_material(preview_cube)
@@ -287,16 +288,13 @@ func handle_preview_logic(root: Node3D, grid_map: GridMap) -> void:
 	if _uses_surface_snap() and _try_get_surface_snap_position(hit_result, preview_mesh, size_after_scale, grid_map, surface_snap_points):
 		final_pos = surface_snap_points[0]
 	else:
-		var map_coord = Vector3i(
-			floor(local_pos.x / cell_size.x),
-			floor(local_pos.y / cell_size.y),
-			floor(local_pos.z / cell_size.z)
-		)
+		var map_coord := grid_map.local_to_map(local_pos)
+		map_coord.y = 0
 		final_pos = grid_map.map_to_local(map_coord)
 		if _uses_edge_snap() and StoryLevels.is_mezzanine_runtime_layer(int(current_building.get("view_layer", 0))):
-			final_pos.y = _get_mezzanine_air_wall_center_y(get_active_story_level(), grid_map, int(current_building.get("view_layer", 0)))
+			final_pos.y = _get_mezzanine_air_wall_floor_y(get_active_story_level(), grid_map, int(current_building.get("view_layer", 0)))
 		else:
-			final_pos.y = _get_story_floor_top_y(grid_map) + y_offset
+			final_pos.y = _get_story_wall_anchor_y(grid_map) + y_offset
 		if not _uses_edge_snap():
 			_apply_point_preview_orientation(preview_mesh)
 		if _uses_edge_snap():
@@ -455,16 +453,15 @@ func place_current_building(root: Node3D, grid_map: GridMap) -> void:
 	var new_building = scene_to_spawn.instantiate()
 	if new_building is Node and _uses_edge_snap():
 		(new_building as Node).set_meta("logical_length_scale", _get_wall_length_scale(grid_map.cell_size))
+		_apply_wall_diagonal_fit_meta(new_building as Node, grid_map.cell_size)
 		if scene_to_spawn.resource_path == WALL_SCENE_PATH:
 			var view_layer := int(current_building.get("view_layer", 0))
 			if StoryLevels.is_mezzanine_runtime_layer(view_layer):
 				(new_building as Node).set_meta("air_wall", true)
-				(new_building as Node).set_meta("air_wall_height", StoryLevels.MEZZANINE_WALL_HEIGHT)
+				(new_building as Node).set_meta("air_wall_height", StoryLevels.get_mezzanine_air_wall_height(view_layer))
 				_tag_mezzanine_wall_edge_meta(new_building as Node, grid_map, preview_node)
-			else:
-				(new_building as Node).set_meta("floor_thickness_extension", grid_map.cell_size.y)
 	root.add_child(new_building)
-	new_building.global_transform = preview_node.global_transform
+	new_building.global_transform = _get_point_building_placement_transform(preview_node, grid_map, scene_to_spawn)
 	if new_building is Node:
 		(new_building as Node).set_meta("build_view_layer", int(current_building.get("view_layer", 0)))
 		(new_building as Node).set_meta("story_level", get_active_story_level())
@@ -474,6 +471,21 @@ func place_current_building(root: Node3D, grid_map: GridMap) -> void:
 		root.call("register_runtime_layer_node", new_building as Node3D)
 	_invalidate_preview_cache()
 	print("放置了: ", scene_to_spawn.resource_path)
+
+func _get_rotation_only_global_transform(node: Node3D) -> Transform3D:
+	var source := node.global_transform
+	return Transform3D(source.basis.orthonormalized(), source.origin)
+
+func _get_point_building_placement_transform(preview_node: Node3D, grid_map: GridMap, scene_to_spawn: PackedScene) -> Transform3D:
+	var placement := _get_rotation_only_global_transform(preview_node)
+	if not scene_to_spawn or scene_to_spawn.resource_path != WALL_SCENE_PATH:
+		return placement
+	var view_layer := int(current_building.get("view_layer", 0))
+	if StoryLevels.is_mezzanine_runtime_layer(view_layer):
+		placement.origin.y = _get_mezzanine_air_wall_floor_y(get_active_story_level(), grid_map, view_layer)
+	else:
+		placement.origin.y = _get_story_wall_anchor_y(grid_map)
+	return placement
 
 func _invalidate_preview_cache() -> void:
 	preview_cache_valid = false
@@ -496,6 +508,7 @@ func _apply_preview_fit() -> void:
 	if _uses_edge_snap():
 		var point_cell_size = current_building.get("point_cell_size", Vector3.ONE) as Vector3
 		preview.set_meta("diagonal_fit_base_scale", Vector3(_get_wall_length_scale(point_cell_size), 1.0, 1.0))
+		preview.set_meta("diagonal_fit_cell_size", Vector2(point_cell_size.x, point_cell_size.z))
 	else:
 		preview.set_meta("diagonal_fit_base_scale", Vector3.ONE)
 	DiagonalBuildingFit.apply_to_preview(preview, preview.global_transform.basis)
@@ -577,6 +590,14 @@ func _get_wall_edge_offset(cell_size: Vector3, edge_index: int, thickness: float
 
 func _get_wall_length_scale(cell_size: Vector3) -> float:
 	return maxf(cell_size.x, cell_size.z)
+
+func _get_wall_diagonal_length_scale(cell_size: Vector3) -> float:
+	return Vector2(cell_size.x, cell_size.z).length()
+
+func _apply_wall_diagonal_fit_meta(node: Node, cell_size: Vector3) -> void:
+	if not node:
+		return
+	node.set_meta("diagonal_fit_cell_size", Vector2(cell_size.x, cell_size.z))
 
 func _intersect_point_build_plane(camera: Camera3D, mouse_pos: Vector2, grid_map: GridMap) -> Variant:
 	if not camera or not grid_map:
@@ -838,9 +859,12 @@ func _get_surface_snap_yaw(surface_normal: Vector3, current_yaw: float, half_siz
 	return best_yaw
 
 func _should_center_wall_on_cell() -> bool:
+	var edge_index := int(current_building.get("wall_edge_index", 0))
 	var rotation_offset := float(current_building.get("wall_rotation_degrees", 0.0))
-	var normalized := fposmod(rotation_offset, 90.0)
-	return not is_zero_approx(normalized)
+	var yaw_degrees := _get_wall_edge_base_yaw(edge_index) + rotation_offset
+	var normalized := fposmod(yaw_degrees, 180.0)
+	var snapped_step := int(round(normalized / 45.0)) % 4
+	return snapped_step == 1 or snapped_step == 3
 
 func _handle_cell_line_input(root: Node, event: InputEvent) -> bool:
 	if not current_building["is_active"]:
@@ -904,7 +928,7 @@ func _try_get_cell_line_cursor_position(root: Node3D, grid_map: GridMap, out_poi
 	var cell := grid_map.local_to_map(grid_map.to_local(hit as Vector3))
 	cell.y = 0
 	out_points.clear()
-	out_points.append(CellLinePlacementScript.cell_center_world(grid_map, cell, _get_floor_kind_y(grid_map, get_floor_kind())))
+	out_points.append(CellLinePlacementScript.cell_center_world(grid_map, cell, _get_floor_unit_world_y(grid_map, get_floor_kind())))
 	return true
 
 func _update_cell_line_preview(preview_mesh: MeshInstance3D, grid_map: GridMap, start_point: Vector3, end_point: Vector3) -> void:
@@ -915,11 +939,11 @@ func _update_cell_line_preview(preview_mesh: MeshInstance3D, grid_map: GridMap, 
 		return
 	var start_cell := span.get("start_cell", Vector3i.ZERO) as Vector3i
 	var end_cell := span.get("end_cell", Vector3i.ZERO) as Vector3i
-	var floor_y := _get_floor_kind_y(grid_map, get_floor_kind())
-	var start_world := CellLinePlacementScript.cell_center_world(grid_map, start_cell, floor_y)
-	var end_world := CellLinePlacementScript.cell_center_world(grid_map, end_cell, floor_y)
-	var thickness := grid_map.cell_size.y if get_floor_kind() == "ceiling" else 0.024
-	preview_mesh.global_position = (start_world + end_world) * 0.5 + Vector3.UP * (thickness * 0.5)
+	var unit_y := _get_floor_unit_world_y(grid_map, get_floor_kind())
+	var start_world := CellLinePlacementScript.cell_center_world(grid_map, start_cell, unit_y)
+	var end_world := CellLinePlacementScript.cell_center_world(grid_map, end_cell, unit_y)
+	var thickness := grid_map.cell_size.y
+	preview_mesh.global_position = (start_world + end_world) * 0.5
 	preview_mesh.rotation = Vector3(PI if get_floor_kind() == "ceiling" else 0.0, 0.0, 0.0)
 	preview_mesh.scale = Vector3(
 		(end_cell.x - start_cell.x + 1) * grid_map.cell_size.x,
@@ -1192,7 +1216,6 @@ func _place_cell_line_units(root: Node3D, grid_map: GridMap, scene_to_spawn: Pac
 	var story_level := get_active_story_level()
 	var floor_kind := get_floor_kind()
 	var layer := StoryLevels.get_floor_build_view_layer(floor_kind)
-	var floor_y := _get_floor_kind_y(grid_map, floor_kind)
 	var placed_count := 0
 	var placed_cells: Array[Vector3i] = []
 	var existing_cell_keys := _get_existing_cell_line_unit_keys(root, scene_to_spawn.resource_path, story_level, layer, floor_kind)
@@ -1206,9 +1229,11 @@ func _place_cell_line_units(root: Node3D, grid_map: GridMap, scene_to_spawn: Pac
 		if new_unit is Node3D:
 			var unit_node := new_unit as Node3D
 			_sync_floor_unit_with_grid_map(unit_node, grid_map, floor_kind)
-			var world_pos := CellLinePlacementScript.cell_center_world(grid_map, cell_vec, floor_y)
-			if floor_kind == "ceiling":
-				world_pos.y += grid_map.cell_size.y * 0.5
+			var world_pos := CellLinePlacementScript.cell_center_world(
+				grid_map,
+				cell_vec,
+				_get_floor_unit_world_y_for_story(grid_map, story_level, floor_kind)
+			)
 			unit_node.global_transform = Transform3D(Basis.IDENTITY, world_pos)
 			unit_node.set_meta("cell_line_unit", true)
 			unit_node.set_meta("floor_cell_x", cell_vec.x)
@@ -1311,17 +1336,20 @@ func _sync_floor_unit_with_grid_map(unit_node: Node3D, grid_map: GridMap, floor_
 	mesh_instance.rotation = Vector3.ZERO
 
 func _get_mezzanine_air_wall_center_y(story_level: int, grid_map: GridMap, view_layer: int) -> float:
+	return _get_mezzanine_air_wall_floor_y(story_level, grid_map, view_layer)
+
+func _get_mezzanine_air_wall_floor_y(story_level: int, grid_map: GridMap, view_layer: int) -> float:
 	var floor_top_y := _get_l1_floor_top_y(grid_map)
-	var floor_y := StoryLevels.get_mezzanine_floor_y(story_level, floor_top_y)
 	if view_layer == -1:
-		floor_y = StoryLevels.get_lower_mezzanine_floor_y(story_level, floor_top_y)
-	return floor_y + StoryLevels.MEZZANINE_WALL_HEIGHT * 0.5
+		return StoryLevels.get_lower_mezzanine_floor_y(story_level, floor_top_y)
+	return StoryLevels.get_mezzanine_floor_y(story_level, floor_top_y)
 
 func ensure_mezzanine_perimeter_air_walls(root: Node3D, grid_map: GridMap, story_level: int) -> void:
 	if not root or not grid_map:
 		return
 	var normalized_story := _normalize_story_level(story_level)
 	var ground_cells := collect_l1_ground_reference_cells(root, grid_map)
+	_ensure_mezzanine_air_wall_index(root)
 	_remove_stale_mezzanine_air_walls(root, normalized_story, ground_cells)
 	if ground_cells.is_empty():
 		return
@@ -1331,7 +1359,8 @@ func ensure_mezzanine_perimeter_air_walls(root: Node3D, grid_map: GridMap, story
 	var cell_size := grid_map.cell_size
 	var wall_thickness := 0.2
 	for runtime_layer in MEZZANINE_AIR_WALL_RUNTIME_LAYERS:
-		var wall_center_y := _get_mezzanine_air_wall_center_y(normalized_story, grid_map, runtime_layer)
+		var wall_floor_y := _get_mezzanine_air_wall_floor_y(normalized_story, grid_map, runtime_layer)
+		var wall_height: float = StoryLevels.get_mezzanine_air_wall_height(runtime_layer)
 		for cell_key in ground_cells.keys():
 			var cell := ground_cells[cell_key] as Vector2i
 			for edge_index in range(4):
@@ -1349,8 +1378,47 @@ func ensure_mezzanine_perimeter_air_walls(root: Node3D, grid_map: GridMap, story
 					edge_index,
 					cell_size,
 					wall_thickness,
-					wall_center_y
+					wall_floor_y,
+					wall_height
 				)
+
+func rebuild_mezzanine_air_wall_index(root: Node3D) -> void:
+	mezzanine_air_wall_index.clear()
+	if not root:
+		return
+	for child in root.get_children():
+		if not child is Node3D:
+			continue
+		var node := child as Node3D
+		if bool(node.get_meta("auto_mezzanine_air_wall", false)):
+			_register_mezzanine_air_wall(node)
+
+func _ensure_mezzanine_air_wall_index(root: Node3D) -> void:
+	if not mezzanine_air_wall_index.is_empty() or not root:
+		return
+	rebuild_mezzanine_air_wall_index(root)
+
+func _mezzanine_air_wall_key(story_level: int, view_layer: int, cell_x: int, cell_z: int, edge_index: int) -> String:
+	return "%d,%d,%d,%d,%d" % [story_level, view_layer, cell_x, cell_z, edge_index]
+
+func _register_mezzanine_air_wall(node: Node3D) -> void:
+	if not node:
+		return
+	var story_level := _normalize_story_level(node.get_meta("story_level", 1))
+	var view_layer := int(node.get_meta("build_view_layer", 0))
+	var cell_x := int(node.get_meta("mezzanine_edge_cell_x", 0))
+	var cell_z := int(node.get_meta("mezzanine_edge_cell_z", 0))
+	var edge_index := int(node.get_meta("mezzanine_edge_index", 0))
+	var key := _mezzanine_air_wall_key(story_level, view_layer, cell_x, cell_z, edge_index)
+	mezzanine_air_wall_index[key] = node
+	if not node.tree_exiting.is_connected(_on_mezzanine_air_wall_tree_exiting):
+		node.tree_exiting.connect(_on_mezzanine_air_wall_tree_exiting.bind(key))
+
+func _on_mezzanine_air_wall_tree_exiting(key: String) -> void:
+	mezzanine_air_wall_index.erase(key)
+
+func _unregister_mezzanine_air_wall(story_level: int, view_layer: int, cell_x: int, cell_z: int, edge_index: int) -> void:
+	mezzanine_air_wall_index.erase(_mezzanine_air_wall_key(story_level, view_layer, cell_x, cell_z, edge_index))
 
 func collect_l1_ground_reference_cells(root: Node3D, grid_map: GridMap) -> Dictionary:
 	var cells := _collect_ground_floor_cells(root, 1)
@@ -1370,6 +1438,7 @@ func collect_l1_ground_reference_cells(root: Node3D, grid_map: GridMap) -> Dicti
 func refresh_all_story_mezzanine_air_walls(root: Node3D, grid_map: GridMap, max_story: int) -> void:
 	if not root or not grid_map or collect_l1_ground_reference_cells(root, grid_map).is_empty():
 		return
+	rebuild_mezzanine_air_wall_index(root)
 	for story_level in range(1, maxi(max_story, 1) + 1):
 		ensure_mezzanine_perimeter_air_walls(root, grid_map, story_level)
 
@@ -1478,41 +1547,35 @@ func _is_ground_perimeter_edge(cells: Dictionary, cell_x: int, cell_z: int, edge
 	return not cells.has(neighbor_key)
 
 func _find_mezzanine_air_wall(root: Node3D, story_level: int, view_layer: int, cell_x: int, cell_z: int, edge_index: int) -> Node3D:
-	for child in root.get_children():
-		if not child is Node3D:
-			continue
-		var node := child as Node3D
-		if node.scene_file_path != WALL_SCENE_PATH:
-			continue
-		if not bool(node.get_meta("air_wall", false)):
-			continue
-		if _normalize_story_level(node.get_meta("story_level", 1)) != story_level:
-			continue
-		if int(node.get_meta("build_view_layer", 0)) != view_layer:
-			continue
-		if int(node.get_meta("mezzanine_edge_cell_x", -999999)) != cell_x:
-			continue
-		if int(node.get_meta("mezzanine_edge_cell_z", -999999)) != cell_z:
-			continue
-		if int(node.get_meta("mezzanine_edge_index", -1)) != edge_index:
-			continue
-		return node
-	return null
+	_ensure_mezzanine_air_wall_index(root)
+	var key := _mezzanine_air_wall_key(story_level, view_layer, cell_x, cell_z, edge_index)
+	if not mezzanine_air_wall_index.has(key):
+		return null
+	var node := mezzanine_air_wall_index[key] as Node3D
+	if not is_instance_valid(node):
+		mezzanine_air_wall_index.erase(key)
+		return null
+	return node
 
 func _remove_stale_mezzanine_air_walls(root: Node3D, story_level: int, ground_cells: Dictionary) -> void:
-	for child in root.get_children():
-		if not child is Node3D:
+	_ensure_mezzanine_air_wall_index(root)
+	var stale_keys: Array[String] = []
+	for key in mezzanine_air_wall_index.keys():
+		var parts := str(key).split(",")
+		if parts.size() != 5 or int(parts[0]) != story_level:
 			continue
-		var node := child as Node3D
-		if not bool(node.get_meta("auto_mezzanine_air_wall", false)):
+		var node := mezzanine_air_wall_index[key] as Node3D
+		if not is_instance_valid(node):
+			stale_keys.append(key)
 			continue
-		if _normalize_story_level(node.get_meta("story_level", 1)) != story_level:
-			continue
-		var cell_x := int(node.get_meta("mezzanine_edge_cell_x", 0))
-		var cell_z := int(node.get_meta("mezzanine_edge_cell_z", 0))
-		var edge_index := int(node.get_meta("mezzanine_edge_index", 0))
+		var cell_x := int(parts[2])
+		var cell_z := int(parts[3])
+		var edge_index := int(parts[4])
 		if not _is_ground_perimeter_edge(ground_cells, cell_x, cell_z, edge_index):
 			node.queue_free()
+			stale_keys.append(key)
+	for key in stale_keys:
+		mezzanine_air_wall_index.erase(key)
 
 func _spawn_mezzanine_air_wall(
 	root: Node3D,
@@ -1524,7 +1587,8 @@ func _spawn_mezzanine_air_wall(
 	edge_index: int,
 	cell_size: Vector3,
 	wall_thickness: float,
-	wall_center_y: float
+	wall_floor_y: float,
+	wall_height: float
 ) -> void:
 	var new_wall := wall_scene.instantiate()
 	if not new_wall is Node3D:
@@ -1536,21 +1600,23 @@ func _spawn_mezzanine_air_wall(
 	var local_pos := grid_map.map_to_local(Vector3i(cell.x, 0, cell.y))
 	local_pos += _get_wall_edge_offset(cell_size, edge_index, wall_thickness)
 	var world_pos := grid_map.to_global(local_pos)
-	world_pos.y = wall_center_y
+	world_pos.y = wall_floor_y
 	var base_yaw := _get_wall_edge_base_yaw(edge_index)
 	wall_node.global_transform = Transform3D(Basis(Vector3.UP, deg_to_rad(base_yaw)), world_pos)
 	if wall_node is Node:
 		wall_node.set_meta("air_wall", true)
 		wall_node.set_meta("auto_mezzanine_air_wall", true)
-		wall_node.set_meta("air_wall_height", StoryLevels.MEZZANINE_WALL_HEIGHT)
+		wall_node.set_meta("air_wall_height", wall_height)
 		wall_node.set_meta("build_view_layer", view_layer)
 		wall_node.set_meta("story_level", story_level)
 		wall_node.set_meta("mezzanine_edge_cell_x", cell.x)
 		wall_node.set_meta("mezzanine_edge_cell_z", cell.y)
 		wall_node.set_meta("mezzanine_edge_index", edge_index)
 		wall_node.set_meta("logical_length_scale", _get_wall_length_scale(cell_size))
+		_apply_wall_diagonal_fit_meta(wall_node, cell_size)
 	if wall_node.has_method("refresh_diagonal_fit"):
 		wall_node.call("refresh_diagonal_fit")
+	_register_mezzanine_air_wall(wall_node)
 	if root.has_method("register_runtime_layer_node"):
 		root.call("register_runtime_layer_node", wall_node)
 
@@ -1615,9 +1681,11 @@ func restore_floor_unit(unit_node: Node3D, grid_map: GridMap, layer: int, cell: 
 	var story_level := _normalize_story_level(unit_node.get_meta("story_level", 1))
 	var floor_kind := StoryLevels.normalize_floor_kind(unit_node.get_meta("floor_kind", "ground"))
 	_sync_floor_unit_with_grid_map(unit_node, grid_map, floor_kind)
-	var world_pos := CellLinePlacementScript.cell_center_world(grid_map, cell, _get_floor_kind_y_for_story(grid_map, story_level, floor_kind))
-	if floor_kind == "ceiling":
-		world_pos.y += grid_map.cell_size.y * 0.5
+	var world_pos := CellLinePlacementScript.cell_center_world(
+		grid_map,
+		cell,
+		_get_floor_unit_world_y_for_story(grid_map, story_level, floor_kind)
+	)
 	unit_node.global_transform = Transform3D(Basis.IDENTITY, world_pos)
 	unit_node.set_meta("build_view_layer", layer)
 	unit_node.set_meta("story_level", story_level)
@@ -1650,11 +1718,11 @@ func _ensure_ceiling_light(unit_node: Node3D, grid_map: GridMap) -> void:
 	light.position = Vector3(0.0, -grid_map.cell_size.y * 0.52, 0.0)
 	light.set_meta("ceiling_light", true)
 	light.set_meta("ceiling_light_energy", CEILING_LIGHT_ENERGY)
-	if light.get_tree() and light.get_tree().current_scene and light.get_tree().current_scene.has_method("_update_indoor_lighting_for_camera"):
-		if light.get_tree().current_scene.get("camera_mode_name") == "first_person":
-			light.light_energy = CEILING_LIGHT_ENERGY
-		else:
-			light.light_energy = 0.0
+	var scene_root := unit_node.get_tree().current_scene if unit_node.get_tree() else null
+	if scene_root and scene_root.has_method("register_ceiling_light"):
+		scene_root.call("register_ceiling_light", light)
+	if scene_root and scene_root.get("camera_mode_name") == "first_person":
+		light.light_energy = CEILING_LIGHT_ENERGY
 	else:
 		light.light_energy = 0.0
 
@@ -1896,9 +1964,10 @@ func _place_door_building(root: Node3D, grid_map: GridMap, preview_node: Node3D)
 		(new_building as Node).set_meta("story_level", get_active_story_level())
 		(new_building as Node).set_meta("door_variant_id", str(variant.get("id", "single")))
 		(new_building as Node).set_meta("logical_length_scale", _get_wall_length_scale(grid_map.cell_size))
+		_apply_wall_diagonal_fit_meta(new_building as Node, grid_map.cell_size)
 	root.add_child(new_building)
 	if new_building is Node3D:
-		(new_building as Node3D).global_transform = preview_node.global_transform
+		(new_building as Node3D).global_transform = _get_point_building_placement_transform(preview_node, grid_map, scene_to_spawn)
 	var snap_target := current_building.get("surface_snap_target", null) as Node
 	if snap_target and new_building is Node:
 		(new_building as Node).set_meta("host_wall_path", snap_target.get_path())
@@ -1940,6 +2009,45 @@ func _place_trench_units(root: Node3D, grid_map: GridMap, scene_to_spawn: Packed
 			(new_unit as Node).set_meta("story_level", get_active_story_level())
 		if new_unit is Node3D and root.has_method("register_runtime_layer_node"):
 			root.call("register_runtime_layer_node", new_unit as Node3D)
+	_refresh_trench_wall_visibility(root)
+
+func reposition_all_trench_units(root: Node3D, grid_map: GridMap) -> void:
+	if not root or not grid_map:
+		return
+	for story_level in range(1, maxi(max_story_level, 1) + 1):
+		reposition_trench_units(root, grid_map, story_level)
+
+func reposition_trench_units(root: Node3D, grid_map: GridMap, story_level: int) -> void:
+	if not root or not grid_map:
+		return
+	var targets: Array[Node3D] = []
+	for child in root.get_children():
+		if not child is Node3D:
+			continue
+		var node := child as Node3D
+		if not bool(node.get_meta("trench_unit", false)):
+			continue
+		if _normalize_story_level(node.get_meta("story_level", 1)) != story_level:
+			continue
+		var layer := int(node.get_meta("build_view_layer", 0))
+		if not StoryLevels.is_mezzanine_runtime_layer(layer):
+			continue
+		targets.append(node)
+	if targets.is_empty():
+		return
+	var previous_layer := int(current_building.get("view_layer", 0))
+	for node in targets:
+		var layer := int(node.get_meta("build_view_layer", 0))
+		current_building["view_layer"] = layer
+		var cell := Vector3i(int(node.get_meta("trench_cell_x", 0)), 0, int(node.get_meta("trench_cell_z", 0)))
+		var axis := str(node.get_meta("trench_axis", "x"))
+		var axis_sign := int(node.get_meta("trench_sign", 1))
+		var plane_y := _get_trench_layer_plane_y(grid_map, layer, story_level)
+		var center := CellLinePlacementScript.cell_center_world(grid_map, cell, plane_y)
+		var direction := Vector3.RIGHT * float(axis_sign) if axis == "x" else Vector3.BACK * float(axis_sign)
+		var length := grid_map.cell_size.x if axis == "x" else grid_map.cell_size.z
+		_apply_line_segment(node, center - direction * length * 0.5, center + direction * length * 0.5, grid_map)
+	current_building["view_layer"] = previous_layer
 	_refresh_trench_wall_visibility(root)
 
 func _get_trench_unit_cells(grid_map: GridMap, start_point: Vector3, end_point: Vector3) -> Dictionary:
@@ -2039,7 +2147,7 @@ func _get_tray_bottom_span(story_level: int, layer: int, cell_x: int, cell_z: in
 	return Vector2(-0.5, 0.5)
 
 func _get_effective_line_scene(scene: PackedScene) -> PackedScene:
-	if scene and scene.resource_path == TRENCH_SCENE_PATH and int(current_building.get("view_layer", 0)) == 1:
+	if scene and scene.resource_path == TRENCH_SCENE_PATH and StoryLevels.uses_ceiling_tray_trench(int(current_building.get("view_layer", 0))):
 		return load(CEILING_TRAY_SCENE_PATH) as PackedScene
 	return scene
 
@@ -2084,29 +2192,53 @@ func _snap_line_point(point: Vector3, grid_map: GridMap) -> Vector3:
 		round(point.z / step_z) * step_z
 	)
 
-func _get_layer_plane_y(grid_map: GridMap, layer: int = -1) -> float:
-	if layer < 0:
+func _get_layer_plane_y(grid_map: GridMap, layer: int = -999, story_level: int = -1, _for_trench: bool = false) -> float:
+	if layer == -999:
 		layer = int(current_building.get("view_layer", 0))
-	var story_level := get_active_story_level()
+	if story_level < 1:
+		story_level = get_active_story_level()
 	if not grid_map:
 		return StoryLevels.get_view_layer_y(story_level, layer)
-	match layer:
-		1:
-			return StoryLevels.get_mezzanine_trench_y(story_level, _get_l1_floor_top_y(grid_map))
-		-1:
-			return _get_story_floor_top_y(grid_map) + float(StoryLevels.VIEW_LAYER_OFFSET.get(-1, -1.0))
-		_:
-			return _get_story_floor_top_y(grid_map)
+	var l1_top := _get_l1_floor_top_y(grid_map)
+	if StoryLevels.is_mezzanine_runtime_layer(layer):
+		return StoryLevels.get_mezzanine_work_plane_y(story_level, layer, l1_top)
+	return _get_story_floor_top_y(grid_map)
+
+func _get_trench_layer_plane_y(grid_map: GridMap, layer: int = -999, story_level: int = -1) -> float:
+	return _get_layer_plane_y(grid_map, layer, story_level)
 
 func _get_current_layer_plane_y(grid_map: GridMap = null) -> float:
 	if grid_map:
-		return _get_layer_plane_y(grid_map)
+		var layer := int(current_building.get("view_layer", 0))
+		if StoryLevels.is_mezzanine_runtime_layer(layer):
+			return _get_layer_plane_y(grid_map, layer)
+		return _get_trench_layer_plane_y(grid_map, layer)
 	var layer := int(current_building.get("view_layer", 0))
 	var story_level := get_active_story_level()
 	return StoryLevels.get_view_layer_y(story_level, layer)
 
 func _get_story_floor_top_y(grid_map: GridMap) -> float:
 	return _get_floor_top_y(grid_map)
+
+func _get_story_floor_base_y(grid_map: GridMap) -> float:
+	if not grid_map:
+		return 0.0
+	return grid_map.global_position.y
+
+func _get_story_wall_anchor_y(grid_map: GridMap) -> float:
+	return _get_story_floor_top_y(grid_map)
+
+func _get_floor_unit_world_y(grid_map: GridMap, floor_kind: String) -> float:
+	return _get_floor_unit_world_y_for_story(grid_map, get_active_story_level(), floor_kind)
+
+func _get_floor_unit_world_y_for_story(grid_map: GridMap, story_level: int, floor_kind: String) -> float:
+	if not grid_map:
+		return 0.0
+	var plane_y := _get_floor_kind_y_for_story(grid_map, story_level, floor_kind)
+	var half_thickness := grid_map.cell_size.y * 0.5
+	if floor_kind == "ceiling":
+		return plane_y + half_thickness
+	return plane_y - half_thickness
 
 func _get_floor_kind_y(grid_map: GridMap, floor_kind: String) -> float:
 	return _get_floor_kind_y_for_story(grid_map, get_active_story_level(), floor_kind)
@@ -2134,15 +2266,22 @@ func _apply_line_segment(target: Node3D, start_point: Vector3, end_point: Vector
 	var flat_segment := flat_end - flat_start
 	var length := maxf(flat_segment.length(), PIPE_PREVIEW_MIN_LENGTH)
 	var midpoint := flat_start + flat_segment * 0.5
-	midpoint.y = plane_y + _get_line_vertical_offset()
+	midpoint.y = plane_y + _get_line_vertical_offset(grid_map)
 	var direction := flat_segment.normalized() if flat_segment.length() > 0.001 else Vector3.RIGHT
 	target.global_position = midpoint
 	target.look_at(midpoint + direction, Vector3.UP, true)
 	target.rotate_object_local(Vector3.RIGHT, deg_to_rad(-90.0))
 	target.scale = Vector3(1.0, length, 1.0)
 
-func _get_line_vertical_offset() -> float:
+func _get_line_vertical_offset(_grid_map: GridMap = null) -> float:
 	var scene := _get_effective_line_scene(current_building.get("scene") as PackedScene)
+	var layer := int(current_building.get("view_layer", 0))
+	if StoryLevels.is_mezzanine_runtime_layer(layer):
+		if scene and scene.resource_path == CEILING_TRAY_SCENE_PATH:
+			return 0.5
+		if scene and scene.resource_path == TRENCH_SCENE_PATH:
+			return 0.5
+		return 0.0
 	if scene and scene.resource_path == CEILING_TRAY_SCENE_PATH:
 		return 0.055
 	if scene and scene.resource_path == TRENCH_SCENE_PATH:

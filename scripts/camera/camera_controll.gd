@@ -24,9 +24,9 @@ const SOLID_COLLISION_LAYER := 1
 @export var top_down_pitch_threshold_deg: float = -55.0
 @export var top_down_max_distance_multiplier: float = 2.0
 @export var building_overview_pitch_deg: float = -88.0
-@export var building_overview_distance_multiplier: float = 1.8
-@export var building_overview_max_distance_multiplier: float = 2.5
-@export var building_overview_enter_zoom_buffer: float = 2.5
+@export var building_overview_extra_zoom_out: float = 14.0
+@export var mode_enter_zoom_buffer: float = 2.5
+@export var building_overview_max_entry_jump_ratio: float = 1.2
 @export var min_pitch_deg: float = -75.0
 @export var max_pitch_deg: float = -10.0
 @export var min_camera_world_y: float = 0.0
@@ -42,7 +42,6 @@ const SOLID_COLLISION_LAYER := 1
 
 @export_group("side_view")
 @export var side_view_distance: float = 16.0
-@export var side_view_enter_zoom_buffer: float = 4.5
 @export var side_view_min_pitch_deg: float = -89.0
 @export var side_view_max_pitch_deg: float = 89.0
 
@@ -118,13 +117,13 @@ func _handle_zoom_input(zoom_step: float) -> void:
 				if _should_offer_building_overview():
 					building_overview_zoom_buffer_progress += zoom_step
 					side_view_zoom_buffer_progress = 0.0
-					if building_overview_zoom_buffer_progress >= maxf(building_overview_enter_zoom_buffer, zoom_speed):
+					if building_overview_zoom_buffer_progress >= maxf(mode_enter_zoom_buffer, zoom_speed):
 						building_overview_zoom_buffer_progress = 0.0
 						_enter_building_overview_mode()
 				else:
 					building_overview_zoom_buffer_progress = 0.0
 					side_view_zoom_buffer_progress += zoom_step
-					if side_view_zoom_buffer_progress >= maxf(side_view_enter_zoom_buffer, zoom_speed):
+					if side_view_zoom_buffer_progress >= maxf(mode_enter_zoom_buffer, zoom_speed):
 						side_view_zoom_buffer_progress = 0.0
 						_enter_side_view_mode()
 			else:
@@ -261,17 +260,20 @@ func _get_effective_min_distance() -> float:
 	return maxf(min_distance, 0.05)
 
 func _get_building_overview_distance_hint() -> float:
-	var fallback := max_orbit_distance * top_down_max_distance_multiplier * building_overview_distance_multiplier
+	var fallback := max_orbit_distance * 1.15
 	var scene_root := get_tree().current_scene
 	if scene_root and scene_root.has_method("get_building_overview_camera_state"):
 		var state = scene_root.call("get_building_overview_camera_state", global_position, fallback)
 		if state is Dictionary:
-			return maxf(float(state.get("distance", fallback)), fallback)
+			return maxf(float(state.get("distance", fallback)), fallback * 0.5)
 	return fallback
+
+func _get_building_overview_max_distance() -> float:
+	return _get_building_overview_distance_hint() + maxf(building_overview_extra_zoom_out, 0.0)
 
 func _get_orbit_zoom_max_distance() -> float:
 	if current_mode == CameraMode.BUILDING_OVERVIEW:
-		return _get_building_overview_distance_hint() * building_overview_max_distance_multiplier
+		return _get_building_overview_max_distance()
 	if current_mode != CameraMode.ORBIT:
 		return max_orbit_distance
 	if rad_to_deg(current_pitch) <= top_down_pitch_threshold_deg:
@@ -395,7 +397,10 @@ func _enter_building_overview_mode() -> void:
 	rotation.x = current_pitch
 	global_position = overview_state.get("focus", global_position)
 	current_zoom_dolly_distance = 0.0
-	var overview_distance := float(overview_state.get("distance", max_orbit_distance * top_down_max_distance_multiplier))
+	var suggested_distance := float(overview_state.get("distance", max_orbit_distance * top_down_max_distance_multiplier))
+	var min_entry_distance := stored_orbit_distance * 1.02
+	var max_entry_distance := stored_orbit_distance * maxf(building_overview_max_entry_jump_ratio, 1.02)
+	var overview_distance := clampf(maxf(min_entry_distance, suggested_distance), min_entry_distance, max_entry_distance)
 	desired_camera_local_position = Vector3(0.0, 0.0, overview_distance)
 	zoom_direction = Vector3.FORWARD
 	_apply_camera_collision_to_desired_position()
@@ -416,7 +421,7 @@ func _exit_building_overview_mode() -> void:
 	_notify_scene_mode_changed()
 
 func _get_building_overview_state() -> Dictionary:
-	var fallback_distance := max_orbit_distance * top_down_max_distance_multiplier * building_overview_distance_multiplier
+	var fallback_distance := max_orbit_distance * 1.15
 	var scene_root := get_tree().current_scene
 	if scene_root and scene_root.has_method("get_building_overview_camera_state"):
 		var state = scene_root.call("get_building_overview_camera_state", global_position, fallback_distance)

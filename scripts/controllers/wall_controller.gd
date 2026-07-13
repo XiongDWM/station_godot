@@ -1,6 +1,7 @@
 extends StaticBody3D
 
-const DEFAULT_WALL_HEIGHT := 2.5
+const MESH_BASE_HEIGHT := 2.5
+const DEFAULT_WALL_HEIGHT := StoryLevels.STORY_HEIGHT
 const AIR_WALL_COLOR := Color(0.55, 0.78, 0.95, 0.22)
 
 @onready var wall_mesh: MeshInstance3D = $wall
@@ -19,6 +20,7 @@ func rotate_placement(step_degrees: float) -> void:
 func refresh_diagonal_fit() -> void:
 	_apply_logical_length_scale()
 	_apply_air_wall_visuals()
+	_apply_air_wall_collision()
 	DiagonalBuildingFit.apply(wall_mesh, collision_shape, global_transform.basis)
 
 func _apply_logical_length_scale() -> void:
@@ -28,14 +30,17 @@ func _apply_logical_length_scale() -> void:
 	var mesh_y_offset := 0.0
 	if is_air_wall:
 		target_height = maxf(float(get_meta("air_wall_height", StoryLevels.MEZZANINE_WALL_HEIGHT)), 0.01)
+		mesh_y_offset = target_height * 0.5
 	else:
-		var floor_thickness_extension := maxf(float(get_meta("floor_thickness_extension", 0.0)), 0.0)
-		target_height = DEFAULT_WALL_HEIGHT + floor_thickness_extension
-		mesh_y_offset = -floor_thickness_extension * 0.5
-	var height_scale := target_height / DEFAULT_WALL_HEIGHT
+		mesh_y_offset = target_height * 0.5
+	var height_scale := target_height / MESH_BASE_HEIGHT
 	var base_scale := Vector3(logical_length_scale, height_scale, 1.0)
 	wall_mesh.set_meta("diagonal_fit_base_scale", base_scale)
 	collision_shape.set_meta("diagonal_fit_base_scale", base_scale)
+	if has_meta("diagonal_fit_cell_size"):
+		var cell_size := get_meta("diagonal_fit_cell_size") as Vector2
+		wall_mesh.set_meta("diagonal_fit_cell_size", cell_size)
+		collision_shape.set_meta("diagonal_fit_cell_size", cell_size)
 	wall_mesh.position.y = mesh_y_offset
 	collision_shape.position.y = mesh_y_offset
 
@@ -48,3 +53,11 @@ func _apply_air_wall_visuals() -> void:
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	wall_mesh.material_override = material
+
+func _apply_air_wall_collision() -> void:
+	if not bool(get_meta("air_wall", false)):
+		return
+	collision_layer = 0
+	collision_mask = 0
+	if collision_shape:
+		collision_shape.disabled = true
